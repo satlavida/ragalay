@@ -1,0 +1,13 @@
+# Binaries
+/ragalay
+/ragalay.exe
+/dist/
+
+# Local index/state created by the tool
+.ragalay/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
