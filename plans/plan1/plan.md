@@ -1,6 +1,6 @@
 # Plan 1: ragalay core (MD, PDF, images → hybrid search via CLI, MCP, TUI)
 
-**Status:** Finalized (Phase 0 not started)
+**Status:** In progress (Phase 0 completed 2026-10-06; next: Phase 1)
 **Created:** 2026-10-06 · **Finalized:** 2026-10-06 (after 4 grilling rounds)
 **Follow-ups:** `plans/plan2` (audio/video, search by example), `plans/plan3` (speed, background indexing, distribution)
 
@@ -29,7 +29,7 @@
 | G1 | Ingest is a per-file Go job queue (PDFs report per-page progress). The UI shows an ETA. No fixed scale target. Brute-force vector search is fine, with an ANN index if `tursogo` supports one. |
 | G2 | Python only for indexing (D1/D2). Phase 0 checks GGUF ↔ omni query-vector parity, using F16 if Q8 drifts. |
 | G3 | **Query-vector cache** table keyed by (embed_id, normalized query) storing vector, `hit_count`, `last_used`. LFU + TTL eviction (~10k entries). Cleared on model change. Results are never cached. |
-| G4 | llama.cpp integration picked in Phase 0: in-process purego (`yzma`) preferred, `llama-server` subprocess as fallback. |
+| G4 | llama.cpp integration: **yzma in-process, CPU backend, text-small Q8_0** (decided in Phase 0, §3.1). |
 | G5 | Scan folders **must be inside the root**. Paths are stored relative to it, so moving or copying the whole folder keeps the index valid. |
 | G6 | MD-linked images: follow the link as written (relative to the MD), plus an `assets/` convention. The image must resolve inside the root, otherwise ragalay warns. |
 | G7 | MD ↔ PDF live in separate folders. Pairing order: front-matter `source:` first, then mirrored-folder config (`[[pairs]] md = "md/", pdf = "pdf/"`), then the same base name (left unpaired with a warning if ambiguous). |
@@ -41,7 +41,7 @@
 | G13 | Double-click (no args) opens the TUI. First run is a **setup wizard**: choose folders, accept the license, download with progress, first scan. |
 | G14 | Unsigned binaries. The README shows "Open anyway" steps with screenshots. Signing, Homebrew, and winget come in Plan 3. |
 | G15 | Search output: one result per chunk by default with full chunk text (≤ ~2k chars, `--max-chars`), `k=10`, and `--group-by doc`. |
-| G16 | Chunking: 512 tokens with 64 overlap, split at headings first. Tuned on real documents in Phase 0. |
+| G16 | Chunking: **256 tokens with 32 overlap** (Phase 0 eval, §3.1; was 512/64), split at headings first. Configurable. Re-check on real documents. |
 | G17 | The Turso native library is **embedded in the binary** and extracted on first run. llama.cpp, the GGUF, the omni weights, and the Python venv are **downloaded during setup** into a shared user cache. |
 | G18 | Indexing runs only while the TUI, `scan`, `scan --watch`, or MCP is running. It resumes from the queue on the next launch. |
 | G19 | The TUI checks GitHub releases for updates at most once a day (can be disabled). `ragalay update` swaps the binary. **No telemetry.** |
@@ -56,6 +56,73 @@
   - Indexing: CUDA, then ROCm (Windows RX 9070 XT is a spike), then MPS (M3 Pro), then CPU.
   - Queries: llama.cpp Metal on Mac, Vulkan on Windows/Linux (covers AMD), CPU otherwise.
 
+### 3.1 Phase 0 results (Windows 11, Ryzen 5 5600X, RX 9070 XT; experiment code in `spikes/`)
+**tursogo v0.8.1** (`spikes/turso`, `spikes/tursolock`)
+- ✅ `F32_BLOB(1024)`, `vector32()`, raw little-endian f32 blobs, `vector_distance_cos`, `vector_extract`.
+- ✅ Native library ships via `go:embed` inside `turso-go-platform-libs` (~16 MB on Windows) and is extracted by hash to `os.UserCacheDir()` (override: `TURSO_GO_CACHE_DIR`). **G17 needs no work from us.** Embedded for windows/amd64, darwin/arm64+amd64, linux/amd64+arm64 (glibc + musl).
+- ❌ **No dense ANN index.** `libsql_vector_idx` isn't supported. The only index method (`experimental=index_method`) is `toy_vector_sparse_ivf`, which needs sparse vectors. **Decision: brute-force `ORDER BY vector_distance_cos`**, measured at 70 ms per 10k × 1024-dim (≈0.7 s per 100k). Possible later optimization: Matryoshka 256-dim prefilter plus a 1024-dim rerank.
+- ❌ **No FTS.** No `fts5` module, and the `fts` index method isn't in this build. **Decision: BM25 tables we maintain ourselves in Turso** (`terms`, `postings`, `chunks.len`), scored in Go (`spikes/bm25`). 20k chunks: queries take 6–110 ms, indexing ~1.6 ms per chunk. Everything stays in one transactional file, matching "ragalay stores the BM25 data".
+- ❌ **Exclusive cross-process file lock on Windows.** A second process can't even read while another has the DB open. `experimental=multiprocess_wal` gives "not supported by the active IO backend" on Windows.
+  - ✅ Inside one process, a pool of 4 readers plus a writer works with no errors.
+  - ✅ Open → query → close takes **~9 ms**.
+  - **Decision (implements G12):** short-lived connections. The indexer opens the DB only for each document's write transaction (embedding runs with the DB closed). Search, status, and other processes open, read, and close, with retry and backoff on `Locking error` (up to ~5 s, then "indexing in progress, retry"). Long-running processes (TUI, MCP, `scan --watch`) don't hold the DB open while idle.
+
+**PDF text** (`spikes/pdftext`): **go-pdfium in WebAssembly mode (wazero, no CGO)** chosen.
+- `ledongthuc/pdf` drops all spaces between words ("AttentionIsAllYouNeed"), which rules it out.
+- pdfium gives correct spacing and ligatures at ~6–12 ms per page, after a one-time ~2.5 s wasm startup.
+- Scanned pages return 0 chars, so detection is trivial.
+
+**llama.cpp** (`spikes/llama`): `yzma install -p vulkan` fetches llama.cpp v0.5.0 for Windows Vulkan (30 MB download, 88 MB unpacked, sha256-pinned). The same bundle includes `llama-server.exe`, so either integration mode needs only one download.
+- Text-small Q8_0, 50 queries with the `Query: ` prefix:
+
+  | Mode | Startup | First query | Steady state |
+  |---|---|---|---|
+  | yzma, CPU | 0.46 s | 0.24 s | 113 ms |
+  | yzma, Vulkan | 1.3 s | 2.9 s (shader warmup) | 140 ms |
+  | llama-server, Vulkan | 3.8 s | 0.96 s | 95 ms |
+
+- **Decision (G4): yzma in-process, CPU backend, for query embedding.** A cold one-shot search takes ~0.7 s to get its vector, and cache hits are instant. The GPU doesn't help short queries and adds driver risk. So search uses the **CPU llama.cpp build on every OS** (smaller download, no Vulkan/Metal dependency). GPU stays an option for indexing text in Plan 3.
+- Windows gotcha: put the llama.cpp lib dir on `PATH` before `llama.Load`, otherwise `ggml.dll` can't find its sibling DLLs.
+- **Parity with omni query vectors** (50 queries):
+  - Q8_0: cosine min 0.9996 / median 0.9997, **top-1 doc identical 50/50**.
+  - F16: median 0.9999, also 50/50.
+  - Without the `Query: ` prefix: median 0.92, only 36/50. **The prefix is mandatory.**
+  - **Decision: Q8_0** (639 MB). F16 brings no ranking gain for twice the size.
+
+**omni-small** (`spikes/omni`, `spikes/chunkeval`), sentence-transformers 6.1, transformers 5.18, torch 2.14:
+- **Pin the model revision** (`e3ae4b6e4af4ec0799cd931aefaff03235b5f9d4`). The model runs remote code, and that code changed while the model was downloading. Weights are ~4 GB (bf16). Prompts are `Query: ` / `Document: `, dim 1024.
+- **The custom code ignores the `dtype` load argument (it forces bf16).** Cast after loading with `model.to(dtype)`.
+  - CPU: bf16 is ~7x slower than fp32 on Zen 3, so **CPU uses fp32**.
+  - GPU: **bf16**.
+- **Requires `torchvision`.** Without it, the image processor is `None` and image embedding crashes.
+- Throughput:
+
+  | Device | RAM / VRAM | Text chunk (~400 tok) | Image / PDF page |
+  |---|---|---|---|
+  | CPU fp32 (Ryzen 5600X) | 6.9 GB | 1.4 s | 4.1 s @448 px, 6.6 s @612x792 |
+  | **ROCm, RX 9070 XT, bf16** | 1.7 GB host | **0.06 s** (~0.025 s batched) | **0.10-0.16 s** up to 1024 px, after warmup |
+
+- **ROCm on Windows works for the RX 9070 XT.** Install from AMD's index: `--index-url https://stable.repo.amd.com/rocm/whl-next/ "torch[device-gfx1201]==2.14.0+rocm10.1.0" "torchvision[device-gfx1201]==0.29.0a0+rocm10.1.0"`. `torch.cuda.is_available()` returns True.
+  - **Gotcha:** MIOpen compiles kernels for every new image shape (4-12 s the first time).
+  - **Decision:** resize each image or page to a fixed bucket (long side 1024, padded to a few fixed shapes) so compiles happen once.
+- **Combined text + image input works:** `encode_document([(text, image)])`. Cosine against the image alone is 0.993. **Decision: MD-linked images are embedded with their alt text + heading as one combined input** (G6).
+- Scanned page image vs the original page image: cosine 0.995, so page images cover scanned PDFs.
+- **Chunk-size eval** (20 labelled queries over the Attention + BERT papers, page-level scoring):
+
+  | Unit | hit@1 | hit@5 | MRR |
+  |---|---|---|---|
+  | **256/32 tokens** | **0.75** | **0.90** | **0.822** |
+  | 512/64 | 0.70 | 0.85 | 0.775 |
+  | 1024/128 | 0.45 | 0.85 | 0.600 |
+  | whole page | 0.50 | 0.90 | 0.644 |
+  | page image 1024 px | 0.65 | 0.90 | 0.774 |
+
+  - **Decision: default 256/32.** Small sample, so revisit with real user documents.
+  - Page images alone almost match 512-token text, which supports the PDF page-image design.
+- **CPU-only cost:** a 100-page PDF costs roughly 10 min for page images plus 3 min for text. The ETA must make that visible (G1).
+
+**Deferred:** macOS (M3 Pro: MPS, Metal, tursogo dylib), user 2026-10-06. Linux gets checked by CI in Phase 1.
+
 ## 4. Design
 
 ### 4.1 Files on disk
@@ -65,7 +132,7 @@
   <user folders>/...             # only folders inside root can be scanned (G5)
   .ragalay/
     config.toml                  # folders, pairs, chunking, dim, update check, ignore globs
-    index.db                     # documents, chunks, vectors, FTS, query cache
+    index.db                     # documents, chunks, vectors, BM25 tables, query cache
     index.lock                   # present only while indexing (G12)
     lib/                         # extracted Turso native lib (G17)
     logs/
@@ -89,13 +156,15 @@ md  = "md/"
 pdf = "pdf/"
 
 [chunk]
-tokens = 512
-overlap = 64
+tokens = 256
+overlap = 32
 
 [embed]
 dim = 1024                       # Matryoshka: 1024/768/512/256/128/64/32
 index_model = "jinaai/jina-embeddings-v5-omni-small-retrieval"
-query_model = "jinaai/jina-embeddings-v5-text-small-retrieval-GGUF:F16"   # or Q8_0 after the Phase 0 parity check
+index_revision = "e3ae4b6e4af4ec0799cd931aefaff03235b5f9d4"   # pinned remote code
+query_model = "jinaai/jina-embeddings-v5-text-small-retrieval-GGUF:Q8_0"
+image_max_side = 1024            # fixed buckets avoid per-shape kernel compiles on ROCm
 
 [cache]
 query_max = 10000
@@ -115,10 +184,12 @@ doc_links(parent_id, child_id, heading_path, alt_text)   -- MD → linked image 
 chunks(id, document_id, ord, modality, text, heading_path, page, token_count,
        embedding F32_BLOB(<dim>))
   -- modality: text | pdf_page | image
+terms(id, term UNIQUE, df)                                -- BM25 (Turso has no FTS, §3.1)
+postings(term_id, chunk_id, tf, PRIMARY KEY(term_id, chunk_id))
 query_cache(embed_id, query_norm, vector, hit_count, last_used, created_at,
             PRIMARY KEY(embed_id, query_norm))
 jobs(document_id PRIMARY KEY, state, attempts, last_error, enqueued_at)   -- G1/G18 resumable queue
--- + vector index (if supported) and FTS over chunks.text
+-- no ANN index: brute-force vector_distance_cos (§3.1). chunks.token_count doubles as the BM25 doc length
 ```
 
 ### 4.4 Indexing (Python omni sidecar)
@@ -169,17 +240,17 @@ Official Go SDK, stdio. Tools: `search`, `status`, `list_documents`, `list_folde
 
 ## 5. Phases
 
-### Phase 0: Spikes and decisions
-- [ ] `tursogo` on Windows, macOS (M3 Pro), Linux: `F32_BLOB(1024)`, `vector_distance_cos`, ANN/`vector_top_k`, FTS. One process writing while another reads (G12)
-- [ ] Embed the Turso native lib in the binary and extract it on first run, on 2 OSes (G17)
-- [ ] omni sidecar: uv + Python 3.11, embed text, image, and PDF page over stdio. Measure throughput and RAM on Windows CPU, **ROCm-on-Windows (RX 9070 XT)**, and **MPS (M3 Pro)**
-- [ ] Check whether omni accepts a combined image + text input
-- [ ] llama.cpp query embedding: `yzma` in-process vs `llama-server`, on Windows Vulkan and Mac Metal. Pick one (G4)
-- [ ] Parity: cosine(omni text vector, GGUF Q8_0 / F16 vector) on ~50 queries. Pick the query GGUF precision
-- [ ] Pure-Go PDF text extraction: compare libraries on 3–5 real PDFs
-- [ ] Chunk size: retrieval check at 512/64 against alternatives on real documents (G16)
-- [ ] Record the results in §3 and adjust defaults
-- **Exit:** every bullet has a working proof, and the choices are recorded in this plan.
+### Phase 0: Spikes and decisions ✅ Completed (2026-10-06)
+- [x] `tursogo` on Windows (+ Linux via CI; **macOS deferred**, user 2026-10-06): `F32_BLOB(1024)`, `vector_distance_cos`, ANN/`vector_top_k`, FTS. One process writing while another reads (G12). Vectors work. No ANN, no FTS, exclusive lock (see §3.1)
+- [x] Embed the Turso native lib in the binary and extract it on first run (G17): built into tursogo. Verified on Windows; other OSes via CI/deferred
+- [x] omni sidecar: uv + Python 3.11, embed text, image, and PDF page over stdio. Measure throughput and RAM on Windows CPU and **ROCm-on-Windows (RX 9070 XT)**. MPS (M3 Pro) deferred
+- [x] Check whether omni accepts a combined image + text input (yes)
+- [x] llama.cpp query embedding: `yzma` in-process vs `llama-server`, on Windows Vulkan (Mac Metal deferred). Pick one (G4)
+- [x] Parity: cosine(omni text vector, GGUF Q8_0 / F16 vector) on ~50 queries. Pick the query GGUF precision
+- [x] Pure-Go PDF text extraction: compare libraries on real PDFs (2 papers + a scanned PDF; go-pdfium wasm)
+- [x] Chunk size: retrieval check at 512/64 against alternatives (G16): 256/32 wins
+- [x] Record the results in §3 and adjust defaults
+- **Exit:** every bullet has a working proof on Windows, and the choices are recorded in this plan. **Mac checks are deferred** (user, 2026-10-06) and get re-run before the Phase 8 drop-in test.
 
 ### Phase 1: Skeleton, config, store
 - [ ] Rename module to `github.com/satlavida/ragalay`. Add Apache-2.0 `LICENSE`
@@ -191,8 +262,8 @@ Official Go SDK, stdio. Tools: `search`, `status`, `list_documents`, `list_folde
 
 ### Phase 2: Runtimes and setup
 - [ ] Shared cache, downloader (progress, checksum, resume), `uv` fetch (G9)
-- [ ] venv plus per-device wheel selection (CUDA/ROCm/MPS/CPU), embedded sidecar script, JSON-RPC client, lifecycle
-- [ ] llama.cpp fetch (backend per OS/GPU), GGUF download, query embedder (G2/G4)
+- [ ] venv plus per-device wheel selection (CUDA / ROCm gfx-specific index / MPS / CPU, always with torchvision), pinned model revision, dtype cast (GPU bf16, CPU fp32), fixed image buckets, embedded sidecar script, JSON-RPC client, lifecycle
+- [ ] llama.cpp **CPU** build fetch (yzma installer logic, sha256-pinned), Q8_0 GGUF download, yzma query embedder with `Query: ` prefix and PATH fix on Windows (G2/G4)
 - [ ] `query_cache` with LFU/TTL eviction (G3)
 - [ ] `setup` command: license record, self-test for both runtimes
 - **Exit:** `ragalay setup` works from scratch on Windows (AMD) and the M3 Pro, and a Go test embeds through both runtimes.
@@ -200,7 +271,7 @@ Official Go SDK, stdio. Tools: `search`, `status`, `list_documents`, `list_folde
 ### Phase 3: Scan, records, pairing, lock
 - [ ] Walker over the configured folders, ignore globs, kind mapping
 - [ ] `(size, mtime)` → `sha256` change detection, deletions, **move detection** (G10)
-- [ ] `jobs` queue, crash recovery, `index.lock` (G12)
+- [ ] `jobs` queue, crash recovery, `index.lock` (G12), short-lived DB connections with lock-retry backoff (§3.1)
 - [ ] Pairing: front matter, then `[[pairs]]`, then base name (G7)
 - [ ] `scan --watch` with fsnotify and debouncing, following folder changes
 - **Exit:** add/edit/move/delete/pair in test folders shows correctly in `status --json`. A second indexer is refused cleanly.
@@ -209,12 +280,12 @@ Official Go SDK, stdio. Tools: `search`, `status`, `list_documents`, `list_folde
 - [ ] MD: goldmark AST, heading paths, front matter, image links resolved per G6, `doc_links`
 - [ ] PDF: per-page text plus page-image inputs, skipping text for paired PDFs
 - [ ] Standalone images, deduplicated against linked images
-- [ ] Recursive chunker (512/64, heading-first) with golden tests
+- [ ] Recursive chunker (256/32 by tokenizer count, heading-first) with golden tests
 - **Exit:** golden tests pass for MD + linked images, text PDF, scanned PDF, and standalone images.
 
 ### Phase 5: Ingest and model swap
 - [ ] Job runner: priority order, batching, one transaction per document, retries, ETA, resume after quit (G18)
-- [ ] Populate the vector and FTS indexes
+- [ ] Store vectors and populate the BM25 `terms`/`postings` tables in the same transaction
 - [ ] `embed_id` mismatch → exit 2 / banner, resumable `reembed` that clears the cache
 - **Exit:** a mixed sample folder indexes end to end, survives being killed mid-run, and a change to `dim` triggers a re-embed.
 

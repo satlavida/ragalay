@@ -11,3 +11,10 @@
 .idea/
 .DS_Store
 Thumbs.db
+
+# Spike fixtures and outputs (downloaded / generated)
+spikes/fixtures/
+spikes/omni/out/
+*.db
+*.db-wal
+*.db-shm
