@@ -136,6 +136,11 @@ func DeleteDocument(ctx context.Context, tx *sql.Tx, id int64) error {
 			ON CONFLICT (document_id) DO UPDATE SET state = 'queued', attempts = 0`,
 		`DELETE FROM doc_links WHERE parent_id = ?1`,
 		`DELETE FROM jobs WHERE document_id = ?1`,
+		// A PDF that loses its transcription needs its own text indexed.
+		`INSERT INTO jobs (document_id, state, attempts, enqueued_at)
+			SELECT id, 'queued', 0, ?2 FROM documents WHERE pair_document_id = ?1 AND kind = 'pdf'
+			ON CONFLICT (document_id) DO UPDATE SET state = 'queued', attempts = 0`,
+		`UPDATE documents SET status = 'pending' WHERE pair_document_id = ?1 AND kind = 'pdf'`,
 		`UPDATE documents SET pair_document_id = NULL WHERE pair_document_id = ?1`,
 		`DELETE FROM documents WHERE id = ?1`,
 	}

@@ -1,6 +1,6 @@
 # Plan 1: ragalay core (MD, PDF, images → hybrid search via CLI, MCP, TUI)
 
-**Status:** In progress (Phases 0–5 completed 2026-10-06; next: Phase 6)
+**Status:** In progress (Phases 0–6 completed 2026-10-06; next: Phase 7)
 **Created:** 2026-10-06 · **Finalized:** 2026-10-06 (after 4 grilling rounds)
 **Follow-ups:** `plans/plan2` (audio/video, search by example), `plans/plan3` (speed, background indexing, distribution)
 
@@ -357,11 +357,26 @@ Official Go SDK, stdio. Tools: `search`, `status`, `list_documents`, `list_folde
   - ✅ Unit tests (`internal/index`, fake embedder): end to end, linked dedup, paired PDF, broken PDF retry limit, cancellation mid-embed, dim change → mismatch → reembed at 512.
   - ✅ Real models on the RX 9070 XT: papers + paired transcription + linked and standalone images + scanned PDF went to 126 chunks in 40 s. `taskkill /F` mid-run left one document `processing`, and the next `scan` recovered it and finished. Changing `dim` to 512 gave the banner and exit 2, and `reembed` rebuilt everything at 512 dims.
 
-### Phase 6: Search and MCP
-- [ ] Vector + BM25 + RRF, modes, filters, pair dedup, `--group-by doc`, `--max-chars`, stable JSON
-- [ ] Keyword-only fallback when llama.cpp is missing
-- [ ] `ragalay mcp` with 5 tools, tested from Claude Code
+### Phase 6: Search and MCP ✅ Completed (2026-10-06)
+- [x] Vector + BM25 + RRF, modes, filters, pair dedup, `--group-by doc`, `--max-chars`, stable JSON (`internal/search`).
+  - Vector search is brute-force `vector_distance_cos`. BM25 is scored from our own postings. They merge with RRF (k=60).
+  - Filters: `--modality` and `--path-glob` (SQL `GLOB`; `*` also matches across folders).
+  - Pair merge: same page, or a page-less transcription folds into its PDF's best hit. The result cites the PDF page and shows the transcription's text.
+  - Linked-image hits report `path` = the image and `parent_path` = the MD.
+  - The query cache is keyed by space + query model; it's evicted on write and checked against the index dimension.
+  - Search refuses on a model mismatch (exit 2).
+- [x] Keyword-only fallback when llama.cpp is missing (with a notice on stderr / in `notice`).
+- [x] `ragalay mcp` with 5 tools (`internal/mcpserver`, official go-sdk v1.8.0, stdio).
+  - Tools: search, status, list_documents, list_folders, scan.
+  - The query model loads on the first search and stays loaded. Config is re-read per call.
+  - Tested over real stdio with the official MCP client (`spikes/mcpclient`), the same protocol Claude Code uses. Not added to the user's Claude Code config automatically; the README has the one-line `claude mcp add` command.
+- Fixes found while testing on real PDFs:
+  - PDFium's U+0002 line-end hyphenation marker becomes `-`, and other control characters are stripped.
+  - A PDF is re-queued when it gains or loses its transcription (its text was otherwise never indexed after the MD went away).
+  - `reembed` scans first.
 - **Exit:** an agent gets cited results (path + page) through `search --json` and MCP, and search never starts Python (checked in a test).
+  - ✅ `internal/search` tests cover modes, filters, citations, pair merge, group-by, trimming, query cache, fallback, and mismatch. `TestSearchNeverStartsPython` checks that `internal/search` doesn't depend on the sidecar.
+  - ✅ Real index: CLI search ~1.0 s cold. "How many layers in the encoder stack" finds Attention p.3 (N = 6). MCP search 464 ms first, 78 ms after.
 
 ### Phase 7: TUI
 - [ ] First-run setup wizard (G13)

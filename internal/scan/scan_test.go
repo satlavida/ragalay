@@ -270,6 +270,26 @@ func TestPairing(t *testing.T) {
 	}
 }
 
+func TestPDFRequeuedWhenItsTranscriptionGoes(t *testing.T) {
+	root := newRoot(t)
+	write(t, root, "md/report.md", "# Report")
+	write(t, root, "pdf/report.pdf", "%PDF")
+	mustScan(t, root, config.Default())
+	ctx := context.Background()
+	db := filepath.Join(root, config.DirName, config.DBFile)
+	// Pretend both were indexed.
+	store.With(ctx, db, func(d *sql.DB) error {
+		_, err := d.ExecContext(ctx, `UPDATE documents SET status = 'done'`)
+		d.ExecContext(ctx, `DELETE FROM jobs`)
+		return err
+	})
+	os.Remove(filepath.Join(root, "md", "report.md"))
+	rep := mustScan(t, root, config.Default())
+	if got := docs(t, root)["pdf/report.pdf"]; got.Status != store.StatusPending || got.PairID != 0 || rep.Queued != 1 {
+		t.Fatalf("PDF must be re-indexed with its own text: %+v queued=%d", got, rep.Queued)
+	}
+}
+
 func TestPairPrecedenceIgnoresFileOrder(t *testing.T) {
 	// a.md (sorted first) would take report.pdf by name, but z.md claims it
 	// through front matter, which must win.

@@ -6,6 +6,7 @@ require (
 	github.com/hybridgroup/yzma v1.28.0
 	github.com/klippa-app/go-pdfium v1.21.1
 	github.com/ledongthuc/pdf v0.0.0-20260907135840-6c8c28e0e8a0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	turso.tech/database/tursogo v0.8.2
 )
 
@@ -50,6 +51,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.14 // indirect
@@ -63,10 +65,13 @@ require (
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.7.0 // indirect
 	github.com/tetratelabs/wazero v1.12.0 // indirect
 	github.com/tursodatabase/turso-go-platform-libs v0.8.2 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.44.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.63.0 // indirect

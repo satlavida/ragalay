@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -35,36 +36,9 @@ func (a *app) docsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var docs []store.Document
-			err = store.With(cmd.Context(), dbPath(root), func(db *sql.DB) error {
-				docs, err = store.ListDocuments(cmd.Context(), db, status, kind)
-				return err
-			})
+			out, err := docInfos(cmd.Context(), root, status, kind)
 			if err != nil {
 				return err
-			}
-			paths := map[int64]string{}
-			if status != "" || kind != "" {
-				// Pairs may point outside the filter; look them up.
-				err = store.With(cmd.Context(), dbPath(root), func(db *sql.DB) error {
-					all, err := store.ListDocuments(cmd.Context(), db, "", "")
-					for _, d := range all {
-						paths[d.ID] = d.Path
-					}
-					return err
-				})
-				if err != nil {
-					return err
-				}
-			} else {
-				for _, d := range docs {
-					paths[d.ID] = d.Path
-				}
-			}
-			out := make([]DocInfo, len(docs))
-			for i, d := range docs {
-				out[i] = DocInfo{Path: d.Path, Kind: d.Kind, Status: d.Status, Error: d.Error, Chunks: d.ChunkCount,
-					PairedPath: paths[d.PairID], Size: d.Size, SHA256: d.SHA256}
 			}
 			if asJSON {
 				return a.printJSON(out)
@@ -93,3 +67,29 @@ func (a *app) docsCmd() *cobra.Command {
 }
 
 func jsonLine(w io.Writer) *json.Encoder { return json.NewEncoder(w) }
+
+// docInfos lists documents with their paired paths (also used by MCP).
+func docInfos(ctx context.Context, root, status, kind string) ([]DocInfo, error) {
+	var docs, all []store.Document
+	err := store.With(ctx, dbPath(root), func(db *sql.DB) error {
+		var err error
+		if all, err = store.ListDocuments(ctx, db, "", ""); err != nil {
+			return err
+		}
+		docs, err = store.ListDocuments(ctx, db, status, kind)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	paths := make(map[int64]string, len(all))
+	for _, d := range all {
+		paths[d.ID] = d.Path
+	}
+	out := make([]DocInfo, len(docs))
+	for i, d := range docs {
+		out[i] = DocInfo{Path: d.Path, Kind: d.Kind, Status: d.Status, Error: d.Error, Chunks: d.ChunkCount,
+			PairedPath: paths[d.PairID], Size: d.Size, SHA256: d.SHA256}
+	}
+	return out, nil
+}

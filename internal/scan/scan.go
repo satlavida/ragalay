@@ -259,6 +259,13 @@ func applyPairs(ctx context.Context, tx *sql.Tx, pairs []Pair, rep *Report) erro
 			if err := store.SetPair(ctx, tx, d.ID, want[d.ID]); err != nil {
 				return err
 			}
+			// A PDF's text is skipped while it has a transcription, so gaining
+			// or losing one means indexing it again.
+			if d.Kind == KindPDF && (want[d.ID] != 0) != (d.PairID != 0) && d.Status != store.StatusPending {
+				if err := store.SetStatus(ctx, tx, d.ID, store.StatusPending); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil

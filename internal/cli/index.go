@@ -17,6 +17,7 @@ import (
 	"github.com/satlavida/ragalay/internal/index"
 	"github.com/satlavida/ragalay/internal/llama"
 	"github.com/satlavida/ragalay/internal/lock"
+	"github.com/satlavida/ragalay/internal/scan"
 	"github.com/satlavida/ragalay/internal/setup"
 	"github.com/satlavida/ragalay/internal/sidecar"
 )
@@ -187,6 +188,15 @@ func (a *app) reembedCmd() *cobra.Command {
 				return lockErr(err)
 			}
 			defer l.Release()
+			// Bring the document list up to date first, so deleted files are
+			// not rebuilt and pairing is current.
+			rep, err := scan.Run(ctx, root, cfg)
+			if err != nil {
+				return err
+			}
+			if !asJSON && rep.Changes() {
+				a.printScan(rep, false)
+			}
 			queued := int64(0)
 			if err := index.CheckSpace(ctx, root, cfg); index.IsMismatch(err) || force {
 				if queued, err = index.Reembed(ctx, root, cfg); err != nil {

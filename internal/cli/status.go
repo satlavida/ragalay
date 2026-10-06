@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -59,43 +60,10 @@ func (a *app) statusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfg, err := config.Load(root)
+			rep, err := statusReport(cmd.Context(), root)
 			if err != nil {
 				return err
 			}
-			rep := StatusReport{Root: root, Version: Version, ConfigErrors: []string{}, WholeDir: len(cfg.Scan.Folders) == 0}
-			if verr := cfg.Validate(); verr != nil {
-				rep.ConfigErrors = splitErrors(verr)
-			}
-			if rep.Folders, err = folderInfos(cmd.Context(), root, cfg); err != nil {
-				return err
-			}
-			err = store.With(cmd.Context(), dbPath(root), func(db *sql.DB) error {
-				if rep.Index, err = store.ReadStats(cmd.Context(), db); err != nil {
-					return err
-				}
-				if rep.Queued, err = store.QueuedJobs(cmd.Context(), db); err != nil {
-					return err
-				}
-				return db.QueryRowContext(cmd.Context(),
-					`SELECT count(*) FROM documents WHERE pair_document_id IS NOT NULL AND kind = 'markdown'`).Scan(&rep.Pairs)
-			})
-			if info, alive := lock.Read(filepath.Join(root, config.DirName)); alive {
-				rep.Indexing = &info
-			}
-			if want := index.SpaceID(cfg); rep.Index.EmbedID != "" && rep.Index.EmbedID != want {
-				rep.ModelMismatch = &Mismatch{Index: rep.Index.EmbedID, Config: want}
-			}
-			if err != nil {
-				return err
-			}
-			if cache, err := setup.CacheDir(); err == nil {
-				st, _ := setup.LoadState(cache)
-				rep.Setup = SetupInfo{Ready: st.Ready(), SearchReady: st.QueryReady(),
-					Device: st.Device, DeviceName: st.DeviceName, CacheDir: cache}
-			}
-			// Setup is machine-wide: a new folder on a set-up computer is ready too.
-			rep.SetupComplete = rep.Setup.Ready
 			if asJSON {
 				return a.printJSON(rep)
 			}
@@ -105,6 +73,48 @@ func (a *app) statusCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")
 	return cmd
+}
+
+// statusReport gathers `status` for root (also used by MCP and the TUI).
+func statusReport(ctx context.Context, root string) (StatusReport, error) {
+	cfg, err := config.Load(root)
+	if err != nil {
+		return StatusReport{}, err
+	}
+	rep := StatusReport{Root: root, Version: Version, ConfigErrors: []string{}, WholeDir: len(cfg.Scan.Folders) == 0}
+	if verr := cfg.Validate(); verr != nil {
+		rep.ConfigErrors = splitErrors(verr)
+	}
+	if rep.Folders, err = folderInfos(ctx, root, cfg); err != nil {
+		return rep, err
+	}
+	err = store.With(ctx, dbPath(root), func(db *sql.DB) error {
+		if rep.Index, err = store.ReadStats(ctx, db); err != nil {
+			return err
+		}
+		if rep.Queued, err = store.QueuedJobs(ctx, db); err != nil {
+			return err
+		}
+		return db.QueryRowContext(ctx,
+			`SELECT count(*) FROM documents WHERE pair_document_id IS NOT NULL AND kind = 'markdown'`).Scan(&rep.Pairs)
+	})
+	if err != nil {
+		return rep, err
+	}
+	if info, alive := lock.Read(filepath.Join(root, config.DirName)); alive {
+		rep.Indexing = &info
+	}
+	if want := index.SpaceID(cfg); rep.Index.EmbedID != "" && rep.Index.EmbedID != want {
+		rep.ModelMismatch = &Mismatch{Index: rep.Index.EmbedID, Config: want}
+	}
+	if cache, err := setup.CacheDir(); err == nil {
+		st, _ := setup.LoadState(cache)
+		rep.Setup = SetupInfo{Ready: st.Ready(), SearchReady: st.QueryReady(),
+			Device: st.Device, DeviceName: st.DeviceName, CacheDir: cache}
+	}
+	// Setup is machine-wide: a new folder on a set-up computer is ready too.
+	rep.SetupComplete = rep.Setup.Ready
+	return rep, nil
 }
 
 func (a *app) printStatus(r StatusReport) {

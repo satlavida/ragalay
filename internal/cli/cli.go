@@ -91,7 +91,7 @@ AI agents (via --json output or MCP) can search them. Nothing leaves your machin
 	}
 	cmd.PersistentFlags().StringVar(&a.rootFlag, "root", "",
 		"ragalay directory (default: search upward from the current folder, then from the binary; env RAGALAY_ROOT)")
-	cmd.AddCommand(a.initCmd(), a.foldersCmd(), a.setupCmd(), a.scanCmd(), a.reembedCmd(), a.docsCmd(), a.statusCmd(), a.versionCmd())
+	cmd.AddCommand(a.initCmd(), a.foldersCmd(), a.setupCmd(), a.scanCmd(), a.reembedCmd(), a.searchCmd(), a.mcpCmd(), a.docsCmd(), a.statusCmd(), a.versionCmd())
 	return cmd
 }
 

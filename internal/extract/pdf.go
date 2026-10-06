@@ -74,13 +74,19 @@ func (r *PDFReader) Pages(file string) ([]string, error) {
 	return pages, nil
 }
 
-// cleanPageText normalises PDF text: unify line endings, drop the NUL and
-// form-feed characters PDFium sometimes emits, and trim.
+// cleanPageText normalises PDF text: unify line endings, turn PDFium's
+// end-of-line hyphenation marker (U+0002, as in "pre\x02train") back into a
+// hyphen, drop other control characters, and trim.
 func cleanPageText(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
 	s = strings.Map(func(r rune) rune {
-		if r == 0 || r == '\f' || r == 0xFFFE {
+		switch {
+		case r == 2:
+			return '-'
+		case r == '\n' || r == '\t':
+			return r
+		case r < 0x20 || r == 0x7f || r == 0xFFFE || r == 0xFFFF:
 			return -1
 		}
 		return r

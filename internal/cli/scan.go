@@ -41,38 +41,17 @@ Only one ragalay process can scan or index a folder at a time.`,
 			if watch {
 				name = "scan --watch"
 			}
-			l, err := lock.Acquire(filepath.Join(root, config.DirName), name)
+			l, err := lockAcquire(root, name)
 			if err != nil {
-				return lockErr(err)
+				return err
 			}
 			defer l.Release()
 			ctx := cmd.Context()
-
-			// index runs the queue after a scan; it returns the summary (or
-			// why indexing was skipped) for the JSON output.
 			runIndex := func(rep scan.Report) (*indexpkg.Summary, string, error) {
 				if noIndex {
 					return nil, "", nil
 				}
-				// A changed model blocks indexing even when nothing is queued,
-				// so the problem is reported straight away (exit 2).
-				if err := indexpkg.CheckSpace(ctx, root, cfg); err != nil {
-					return nil, "", err
-				}
-				if rep.Queued == 0 {
-					return nil, "", nil
-				}
-				sum, err := a.indexQueue(ctx, root, cfg, asJSON)
-				switch {
-				case errors.Is(err, errNotSetUp):
-					if !asJSON {
-						fmt.Fprintln(a.stdout, "Not indexed yet:", err)
-					}
-					return nil, err.Error(), nil
-				case errors.Is(err, context.Canceled):
-					return sum, "", nil
-				}
-				return sum, "", err
+				return a.indexAfterScan(ctx, root, cfg, rep, asJSON)
 			}
 
 			if !watch {
@@ -128,6 +107,47 @@ Only one ragalay process can scan or index a folder at a time.`,
 	cmd.Flags().BoolVar(&noIndex, "no-index", false, "only update the document list, do not embed")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output (one JSON object per scan with --watch)")
 	return cmd
+}
+
+func lockAcquire(root, name string) (*lock.Lock, error) {
+	l, err := lock.Acquire(filepath.Join(root, config.DirName), name)
+	if err != nil {
+		return nil, lockErr(err)
+	}
+	return l, nil
+}
+
+// indexAfterScan runs the queue after a scan and returns the summary, or
+// why indexing was skipped. A changed model blocks indexing even with an
+// empty queue, so the problem is reported straight away (exit 2).
+func (a *app) indexAfterScan(ctx context.Context, root string, cfg config.Config, rep scan.Report, quiet bool) (*indexpkg.Summary, string, error) {
+	if err := indexpkg.CheckSpace(ctx, root, cfg); err != nil {
+		return nil, "", err
+	}
+	if rep.Queued == 0 {
+		return nil, "", nil
+	}
+	sum, err := a.indexQueue(ctx, root, cfg, quiet)
+	switch {
+	case errors.Is(err, errNotSetUp):
+		if !quiet {
+			fmt.Fprintln(a.stdout, "Not indexed yet:", err)
+		}
+		return nil, err.Error(), nil
+	case errors.Is(err, context.Canceled):
+		return sum, "", nil
+	}
+	return sum, "", err
+}
+
+// runScanIndex scans and indexes quietly; the caller holds the lock.
+func runScanIndex(ctx context.Context, a *app, root string, cfg config.Config) (scanOutput, error) {
+	rep, err := scan.Run(ctx, root, cfg)
+	if err != nil {
+		return scanOutput{Report: rep}, err
+	}
+	sum, skipped, err := a.indexAfterScan(ctx, root, cfg, rep, true)
+	return scanOutput{Report: rep, Index: sum, IndexSkipped: skipped, Error: errText(err)}, err
 }
 
 // scanOutput is `scan --json`: the scan report plus what indexing did.
