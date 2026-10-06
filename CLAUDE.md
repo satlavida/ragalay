@@ -8,7 +8,9 @@
 - Layout: `cmd/ragalay` (main) → `internal/cli` (cobra commands) → `internal/config` (config.toml, root discovery, folders) and `internal/store` (Turso schema, migrations, queries, query cache)
 - Models: `internal/setup` (machine-wide install into the user cache; every download pinned in `pins.go`), `internal/sidecar` (Python omni indexing process; `sidecar.py` is embedded), `internal/llama` (in-process query embedding via yzma), `internal/embed` (shared types and vector helpers), `internal/download` (pinned, resumable downloads)
 - Indexing: `internal/scan` (walk, change/move detection, MD↔PDF pairing, watch) under `internal/lock` (single indexer). Anything that writes the index must hold the lock
-- `go test ./...` includes `TestBothRuntimesOnThisMachine`, which uses the real models when `ragalay setup` has run (skipped otherwise, or with `-short`)
+- Search: `internal/search` (hybrid vector + BM25 with RRF, no Python), `internal/mcpserver` (MCP tools), `internal/tui` (Bubble Tea UI behind a `Backend` interface implemented in `internal/cli/tui.go`)
+- Releases: `.goreleaser.yaml` + `.github/workflows/release.yml` on `v*` tags; `internal/update` installs them. Archive names are part of the update contract (`update.AssetName`)
+- `go test ./...` includes `TestBothRuntimesOnThisMachine` and `TestDoubleClickToSearch`, which use the real models when `ragalay setup` has run (skipped otherwise, or with `-short`)
 - Database access always goes through `store.With` (short-lived connection + lock retry; Turso locks the file per process on Windows)
 - Entry point: `cmd/ragalay/main.go`
 - Build: `go build ./...` / Run: `go run ./cmd/ragalay`

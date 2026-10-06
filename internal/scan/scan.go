@@ -232,6 +232,9 @@ func Run(ctx context.Context, root string, cfg config.Config) (Report, error) {
 		rep.Queued, err = store.QueuedJobs(ctx, db)
 		return err
 	})
+	if rep.Changes() {
+		store.Checkpoint(ctx, dbPath)
+	}
 	return rep, err
 }
 

@@ -155,7 +155,11 @@ func (r *Runner) Run(ctx context.Context) (Summary, error) {
 		}
 	}()
 	eta := newETA(r.Root)
-	defer eta.save(r.Root)
+	defer func() {
+		eta.save(r.Root)
+		// Fold the write-ahead log into index.db so the folder copies cleanly.
+		store.Checkpoint(context.Background(), dbPath(r.Root))
+	}()
 
 	for i, job := range jobs {
 		if ctx.Err() != nil {

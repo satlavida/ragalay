@@ -1,0 +1,49 @@
+# Release builds for plan1 Phase 8. `git tag v0.1.0 && git push --tags`
+# runs .github/workflows/release.yml, which runs goreleaser.
+# Try locally: goreleaser release --snapshot --clean
+version: 2
+
+project_name: ragalay
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ragalay
+    main: ./cmd/ragalay
+    binary: ragalay
+    env:
+      - CGO_ENABLED=0 # all native code is loaded with purego (plan1 D6)
+    goos: [windows, darwin, linux]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64 # no tested Turso/llama.cpp libraries yet
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/satlavida/ragalay/internal/cli.Version={{.Tag}}
+
+archives:
+  - id: ragalay
+    # internal/update.AssetName depends on this name.
+    name_template: "ragalay_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^plans", "^spikes"]
+
+release:
+  draft: true # review the notes, then publish

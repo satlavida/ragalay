@@ -69,6 +69,16 @@ func withOnce(ctx context.Context, path string, fn func(*sql.DB) error) error {
 	return fn(db)
 }
 
+// Checkpoint moves the write-ahead log into index.db, so the folder can be
+// copied or backed up as just its files without losing recent writes. Best
+// effort: errors are ignored.
+func Checkpoint(ctx context.Context, path string) {
+	With(ctx, path, func(db *sql.DB) error {
+		var busy, logPages, done int
+		return db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &logPages, &done)
+	})
+}
+
 // Tx runs fn in a transaction, committing on success.
 func Tx(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
 	tx, err := db.BeginTx(ctx, nil)

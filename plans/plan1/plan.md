@@ -1,6 +1,6 @@
 # Plan 1: ragalay core (MD, PDF, images → hybrid search via CLI, MCP, TUI)
 
-**Status:** In progress (Phases 0–7 completed 2026-10-06; next: Phase 8)
+**Status:** In progress. All 9 phases done locally (2026-10-06); waiting on user-side items in Phase 8 (publish a release, Mac checks, human double-click test) before archiving.
 **Created:** 2026-10-06 · **Finalized:** 2026-10-06 (after 4 grilling rounds)
 **Follow-ups:** `plans/plan2` (audio/video, search by example), `plans/plan3` (speed, background indexing, distribution)
 
@@ -401,9 +401,28 @@ Official Go SDK, stdio. Tools: `search`, `status`, `list_documents`, `list_folde
   - ✅ `TestDoubleClickToSearch` (real backend, real models, RX 9070 XT): fresh folder → welcome → Enter → Enter → background indexing → typed question → the right note ranked first with its preview, in 32 s.
   - ⏳ **A human double-click test by a non-technical tester (Windows and Mac) is still pending.** I can't click; it's part of the Phase 8 drop-in test.
 
-### Phase 8: Release and docs
-- [ ] goreleaser for 5 targets, GitHub Actions matrix (windows, macos, ubuntu) running tests
-- [ ] `ragalay update` (G19)
-- [ ] **README for non-technical users:** download, drop into a folder, double-click, "Open anyway" screenshots (G14), choosing folders, keeping MD images next to the MD, model license note, no-telemetry statement. "For AI agents" section at the end (`--json`, MCP config)
-- [ ] Drop-in test on Windows (AMD) and the M3 Pro
+### Phase 8: Release and docs ✅ Done locally (2026-10-06): publishing a release and the Mac checks need the user
+- [x] goreleaser for 5 targets, GitHub Actions matrix (windows, macos, ubuntu) running tests.
+  - `.goreleaser.yaml`: CGO off, `-trimpath`, version via ldflags, archives `ragalay_<os>_<arch>.zip|tar.gz` with README + LICENSE, `checksums.txt`, draft releases.
+  - `.github/workflows/release.yml` runs it on `v*` tags. `ci.yml` was already there from Phase 1.
+  - ✅ `goreleaser release --snapshot` built all 5 archives (~15 MB each). The Windows archive unpacks and runs (`ragalay v0.0.0 (index schema 2)`).
+  - ⏳ `goreleaser check` and both workflows need the GitHub remote; neither has run in CI yet.
+- [x] `ragalay update` (G19), `internal/update/apply.go`.
+  - Picks the platform's archive, verifies it against the release's `checksums.txt` (refuses without one), and swaps the binary. On Windows the running .exe is renamed to `.old` first.
+  - `--check` only reports.
+  - Tests cover install, a tampered checksum, and "no release yet".
+- [x] **README for non-technical users:**
+  - Covers: a download table, drop and double-click, Windows SmartScreen and macOS Gatekeeper "Open anyway" steps (G14), the wizard, search keys, adding files, keeping MD images next to the MD, transcription pairing, folders, hardware table, privacy and no telemetry, licenses (Apache-2.0 code, CC BY-NC 4.0 models), troubleshooting, update/uninstall.
+  - "For AI agents" at the end: CLI, `--json` schema, exit codes, MCP for Claude Code and Desktop, config reference, how it works.
+  - **The screenshots are a text render of the real search screen.** OS warning-dialog screenshots still need to be taken on real machines.
+- [x] Drop-in test on Windows (AMD) and the M3 Pro.
+  - ✅ Windows: the release binary in a fresh folder went init → scan (BERT + image on the RX 9070 XT, 33 s) → search found "we mask 15%" on p.4 and the image query found the car. The TUI path is covered by `TestDoubleClickToSearch`.
+  - ⏸ M3 Pro deferred (user, 2026-10-06).
+- Found and fixed: the index was left in `index.db-wal` (`index.db` was 4 KB), so copying only `index.db` would have lost it. `store.Checkpoint` (`PRAGMA wal_checkpoint(TRUNCATE)`) now runs after each indexing run and each scan with changes.
 - **Exit:** a tagged release publishes binaries, and the drop-in test passes on both machines.
+  - ⏳ **Pending the user:**
+    1. Create `github.com/satlavida/ragalay` and push. CI runs on Windows, macOS, and Linux.
+    2. `git tag v0.1.0 && git push --tags` → a draft release with binaries. Review and publish it.
+    3. Mac drop-in test (+ MPS indexing).
+    4. Double-click test by a non-technical person on Windows and Mac.
+    5. Real screenshots of the OS warning dialogs for the README.

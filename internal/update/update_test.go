@@ -1,9 +1,19 @@
 package update
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -50,6 +60,62 @@ func TestCheckCachesForADay(t *testing.T) {
 	}
 	if v, _ := Check(context.Background(), "dev", cache); v != "" || calls.Load() != 1 {
 		t.Fatal("development builds never check")
+	}
+}
+
+func TestApplyVerifiesAndReplaces(t *testing.T) {
+	dir := t.TempDir()
+	// A release archive containing the new binary.
+	name := "ragalay"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	var zbuf bytes.Buffer
+	asset := AssetName(runtime.GOOS, runtime.GOARCH)
+	if strings.HasSuffix(asset, ".zip") {
+		zw := zip.NewWriter(&zbuf)
+		w, _ := zw.Create(name)
+		w.Write([]byte("new binary"))
+		zw.Close()
+	} else {
+		gz := gzip.NewWriter(&zbuf)
+		tw := tar.NewWriter(gz)
+		tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: 10, Typeflag: tar.TypeReg})
+		tw.Write([]byte("new binary"))
+		tw.Close()
+		gz.Close()
+	}
+	sum := sha256.Sum256(zbuf.Bytes())
+	good := hex.EncodeToString(sum[:]) + "  " + asset + "\n"
+	sums := good
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "checksums.txt"):
+			w.Write([]byte(sums))
+		default:
+			w.Write(zbuf.Bytes())
+		}
+	}))
+	defer srv.Close()
+	rel := Release{Tag: "v9.9.9", Assets: []Asset{{Name: asset, URL: srv.URL + "/" + asset}, {Name: "checksums.txt", URL: srv.URL + "/checksums.txt"}}}
+
+	exe := filepath.Join(dir, name)
+	os.WriteFile(exe, []byte("old binary"), 0o755)
+	if err := Apply(context.Background(), rel, exe, filepath.Join(dir, "work"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "new binary" {
+		t.Fatalf("binary not replaced: %q", b)
+	}
+
+	// A tampered archive is refused.
+	sums = strings.Repeat("0", 64) + "  " + asset + "\n"
+	os.RemoveAll(filepath.Join(dir, "work2"))
+	if err := Apply(context.Background(), rel, exe, filepath.Join(dir, "work2"), nil); err == nil {
+		t.Fatal("checksum mismatch must refuse the update")
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "new binary" {
+		t.Fatal("a refused update must not touch the binary")
 	}
 }
 
