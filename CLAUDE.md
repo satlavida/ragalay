@@ -25,7 +25,7 @@ plans/
 3. **Finalize, then split into phases.** Set the plan's status to `Finalized` only after the user has answered the open questions. Then split it into ordered phases. Each phase gets a goal, a task checklist (`- [ ]`), and exit criteria you can check.
 4. **Track progress in the document.** Tick tasks (`- [x]`) as you finish them. When every task and exit criterion in a phase is met, mark the phase heading `✅ Completed (YYYY-MM-DD)`. Update the plan's top-level status as you go: `Draft` → `Finalized` → `In progress` → `Completed`.
 5. **Commit after each phase.** When a phase is marked completed, make one git commit holding that phase's code plus the updated `plan.md`. Message: `planN phase M: <phase title>`. Don't push unless the user asks.
-6. **Archive.** When every phase is complete, set the status to `Completed` and move the whole folder: `plans/planN` → `plans/archive/planN`.
+6. **Archive and tag.** When every phase is complete, set the status to `Completed`, move the whole folder (`plans/planN` → `plans/archive/planN`), commit (`planN complete`), and create an annotated git tag on that commit: `git tag -a planN -m "Plan N complete: <plan title>"`. Don't push tags unless the user asks.
 7. **New work = new plan.** Put work that falls outside the active plan in the next `plans/planN+1/plan.md`. Don't grow the active plan without limit.
 
 ## Conventions
