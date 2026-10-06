@@ -1,6 +1,6 @@
 # Plan 1: ragalay core (MD, PDF, images → hybrid search via CLI, MCP, TUI)
 
-**Status:** In progress (Phases 0–3 completed 2026-10-06; next: Phase 4)
+**Status:** In progress (Phases 0–4 completed 2026-10-06; next: Phase 5)
 **Created:** 2026-10-06 · **Finalized:** 2026-10-06 (after 4 grilling rounds)
 **Follow-ups:** `plans/plan2` (audio/video, search by example), `plans/plan3` (speed, background indexing, distribution)
 
@@ -318,12 +318,23 @@ Official Go SDK, stdio. Tools: `search`, `status`, `list_documents`, `list_folde
   - ✅ `TestPhase3Flow` (CLI) and `internal/scan` tests.
   - ✅ By hand with the real binary: the watcher picked up dropped files within ~3 s, front matter paired a transcription with its PDF, a second `scan` exited 5 naming the watcher's pid, and a lock left by a killed watcher was taken over.
 
-### Phase 4: Extraction and chunking
-- [ ] MD: goldmark AST, heading paths, front matter, image links resolved per G6, `doc_links`
-- [ ] PDF: per-page text plus page-image inputs, skipping text for paired PDFs
-- [ ] Standalone images, deduplicated against linked images
-- [ ] Recursive chunker (256/32 by tokenizer count, heading-first) with golden tests
-- **Exit:** golden tests pass for MD + linked images, text PDF, scanned PDF, and standalone images.
+### Phase 4: Extraction and chunking ✅ Completed (2026-10-06)
+- [x] MD: goldmark AST, heading paths, front matter, image links resolved per G6, `doc_links` (`internal/extract/markdown.go`).
+  - GFM. Heading paths look like "Title > Section > Sub". `<!-- page N -->` markers set the page.
+  - Images come from `![]()`, reference-style links, and HTML `<img>`. Each resolves relative to the MD (or the root for `/…`), with an `assets/` fallback, and must stay inside the root.
+  - Remote images are skipped quietly. Missing, outside-root, and unsupported images give warnings.
+  - Image syntax is stripped from chunk text, keeping the alt text. Code fences are kept.
+  - Linked images become `image` units embedded **with their caption** (heading path + alt text, combined input).
+- [x] PDF: per-page text plus page-image inputs, skipping text for paired PDFs (`internal/extract/pdf.go`).
+  - go-pdfium wasm, started once per run.
+  - New `[index] pdf_page_images` setting (default true) so CPU-only users can skip page images.
+  - A PDF with no text and page images off fails with `ErrNoContent`. Encrypted PDFs give a clear error.
+- [x] Standalone images, deduplicated against linked images: extraction gives a standalone image one unit. **The dedup itself (skip or remove a standalone image's chunks when an MD links it) lives in the Phase 5 job runner**, because it needs `doc_links` from already-indexed MDs.
+- [x] Recursive chunker (256/32 by tokenizer count, heading-first) with golden tests (`internal/chunk`).
+  - Splits on paragraph, then sentence, then word, with word-level overlap.
+  - Tiny sections merge into the next (never across pages).
+  - Tokens are counted by a `Tokenizer` interface. Production uses the real Qwen3 tokenizer via `llama.Embedder.Count`; tests use a deterministic estimate.
+- **Exit:** golden tests pass for MD + linked images, text PDF, scanned PDF, and standalone images. ✅ `internal/extract/testdata/*.golden.json` (regenerate with `go test ./internal/extract -update`), plus spot checks. PDFs are generated in the test, so no binary fixtures are committed.
 
 ### Phase 5: Ingest and model swap
 - [ ] Job runner: priority order, batching, one transaction per document, retries, ETA, resume after quit (G18)

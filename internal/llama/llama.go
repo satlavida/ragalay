@@ -116,6 +116,19 @@ func (e *Embedder) EmbedQuery(ctx context.Context, text string) ([]float32, erro
 	return append([]float32(nil), v...), nil
 }
 
+// Count returns the number of tokens in text with the model's tokenizer.
+// The text-small vocabulary is the omni indexing model's (same Qwen3 text
+// tower), so this is the exact count the chunker needs. Implements
+// chunk.Tokenizer.
+func (e *Embedder) Count(text string) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.ctx == 0 {
+		return (len(text) + 3) / 4
+	}
+	return len(llama.Tokenize(e.vocab, text, false, false))
+}
+
 // Close frees the model. The library stays loaded for the process lifetime.
 func (e *Embedder) Close() error {
 	e.mu.Lock()

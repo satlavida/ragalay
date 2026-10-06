@@ -1,0 +1,29 @@
+{
+  "units": [
+    {
+      "modality": "text",
+      "text": "Attention Is All You Need. The Transformer uses multi-head attention.",
+      "page": 1,
+      "tokens": 18
+    },
+    {
+      "modality": "text",
+      "text": "Results: BLEU 28.4 on English to German translation.",
+      "page": 2,
+      "tokens": 13
+    },
+    {
+      "modality": "pdf_page",
+      "heading_path": "Page 1",
+      "page": 1,
+      "source": "pdf/text.pdf"
+    },
+    {
+      "modality": "pdf_page",
+      "heading_path": "Page 2",
+      "page": 2,
+      "source": "pdf/text.pdf"
+    }
+  ],
+  "pages": 2
+}

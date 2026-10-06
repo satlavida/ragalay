@@ -1,0 +1,8 @@
+{
+  "units": [
+    {
+      "modality": "image",
+      "source": "photos/cat.png"
+    }
+  ]
+}

@@ -31,6 +31,7 @@ var supportedDims = []int{1024, 768, 512, 256, 128, 64, 32}
 type Config struct {
 	Scan   Scan   `toml:"scan"`
 	Pairs  []Pair `toml:"pairs"`
+	Index  Index  `toml:"index"`
 	Chunk  Chunk  `toml:"chunk"`
 	Embed  Embed  `toml:"embed"`
 	Cache  Cache  `toml:"cache"`
@@ -53,6 +54,12 @@ type Scan struct {
 type Pair struct {
 	MD  string `toml:"md"`
 	PDF string `toml:"pdf"`
+}
+
+type Index struct {
+	// PDFPageImages embeds every PDF page as an image too. It finds scanned
+	// pages and figures, but costs ~0.1 s per page on a GPU and ~6 s on a CPU.
+	PDFPageImages bool `toml:"pdf_page_images"`
 }
 
 type Chunk struct {
@@ -100,6 +107,7 @@ func Default() Config {
 			Ignore:  []string{"**/node_modules/**", "**/.git/**"},
 			Kinds:   []string{"md", "pdf", "image"},
 		},
+		Index: Index{PDFPageImages: true},
 		Chunk: Chunk{Tokens: 256, Overlap: 32},
 		Embed: Embed{
 			Dim:           1024,

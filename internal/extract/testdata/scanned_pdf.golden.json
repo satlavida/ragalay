@@ -1,0 +1,11 @@
+{
+  "units": [
+    {
+      "modality": "pdf_page",
+      "heading_path": "Page 1",
+      "page": 1,
+      "source": "pdf/scanned.pdf"
+    }
+  ],
+  "pages": 1
+}

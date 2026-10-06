@@ -1,0 +1,61 @@
+{
+  "units": [
+    {
+      "modality": "text",
+      "text": "ragalay indexes the documents in a folder so people and AI agents can search them.\n\nArchitecture diagram\n\n## Installing\nDownload the file for your computer and put it in the folder you want to search.\n\n- Windows: `ragalay.exe`\n- macOS: `ragalay`",
+      "heading_path": "ragalay guide",
+      "tokens": 62
+    },
+    {
+      "modality": "text",
+      "text": "Run `ragalay search \"your question\"`. Results show the file and the page.\n\nlogo\n\nThe search screen\n\n```sh\nragalay search \"multi-head attention\" --json\n```\n\n## Images that are skipped\nremote\nmissing\noutside\nvector",
+      "heading_path": "ragalay guide \u003e Searching \u003e From the terminal",
+      "page": 2,
+      "tokens": 53
+    },
+    {
+      "modality": "image",
+      "text": "Architecture diagram",
+      "heading_path": "ragalay guide",
+      "source": "notes/img/architecture.png"
+    },
+    {
+      "modality": "image",
+      "text": "logo",
+      "heading_path": "ragalay guide \u003e Searching \u003e From the terminal",
+      "page": 2,
+      "source": "notes/assets/logo.png"
+    },
+    {
+      "modality": "image",
+      "text": "The search screen",
+      "heading_path": "ragalay guide \u003e Searching \u003e From the terminal",
+      "page": 2,
+      "source": "notes/screens/tui search.png"
+    }
+  ],
+  "links": [
+    {
+      "path": "notes/img/architecture.png",
+      "alt": "Architecture diagram",
+      "heading_path": "ragalay guide"
+    },
+    {
+      "path": "notes/assets/logo.png",
+      "alt": "logo",
+      "heading_path": "ragalay guide \u003e Searching \u003e From the terminal",
+      "page": 2
+    },
+    {
+      "path": "notes/screens/tui search.png",
+      "alt": "The search screen",
+      "heading_path": "ragalay guide \u003e Searching \u003e From the terminal",
+      "page": 2
+    }
+  ],
+  "warnings": [
+    "notes/guide.md: image img/missing.png not found (keep images in the same folder as the Markdown file)",
+    "notes/guide.md: image ../../outside.png is outside the ragalay folder",
+    "notes/guide.md: img/drawing.svg is not a supported image type"
+  ]
+}
