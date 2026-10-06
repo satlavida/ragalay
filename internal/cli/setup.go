@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -121,7 +122,7 @@ self-test. Safe to run again: finished steps are skipped.`,
 			if err != nil {
 				return &exitError{ExitSetupIncomplete, fmt.Errorf("%w\n(details in .ragalay/logs/setup.log)", err)}
 			}
-			if err := recordSetup(cmd, root, cfg, st); err != nil {
+			if err := recordSetup(ctx, root, cfg, st); err != nil {
 				return err
 			}
 			fmt.Fprintf(w, "\nSetup complete. Indexing runs on %s; search runs on the CPU.\n", st.DeviceName)
@@ -137,8 +138,7 @@ self-test. Safe to run again: finished steps are skipped.`,
 // recordSetup stores the license acceptance and the index's vector space in
 // this folder's database. An existing embed_id is never overwritten: a
 // mismatch is handled by re-embedding (plan1 §4.6).
-func recordSetup(cmd *cobra.Command, root string, cfg config.Config, st setup.State) error {
-	ctx := cmd.Context()
+func recordSetup(ctx context.Context, root string, cfg config.Config, st setup.State) error {
 	return store.With(ctx, dbPath(root), func(db *sql.DB) error {
 		return store.Tx(ctx, db, func(tx *sql.Tx) error {
 			if err := store.SetMeta(ctx, tx, "license_accepted_at", st.LicenseAccepted); err != nil {

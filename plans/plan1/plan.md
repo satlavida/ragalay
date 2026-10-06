@@ -1,6 +1,6 @@
 # Plan 1: ragalay core (MD, PDF, images → hybrid search via CLI, MCP, TUI)
 
-**Status:** In progress (Phases 0–6 completed 2026-10-06; next: Phase 7)
+**Status:** In progress (Phases 0–7 completed 2026-10-06; next: Phase 8)
 **Created:** 2026-10-06 · **Finalized:** 2026-10-06 (after 4 grilling rounds)
 **Follow-ups:** `plans/plan2` (audio/video, search by example), `plans/plan3` (speed, background indexing, distribution)
 
@@ -378,12 +378,28 @@ Official Go SDK, stdio. Tools: `search`, `status`, `list_documents`, `list_folde
   - ✅ `internal/search` tests cover modes, filters, citations, pair merge, group-by, trimming, query cache, fallback, and mismatch. `TestSearchNeverStartsPython` checks that `internal/search` doesn't depend on the sidecar.
   - ✅ Real index: CLI search ~1.0 s cold. "How many layers in the encoder stack" finds Attention p.3 (N = 6). MCP search 464 ms first, 78 ms after.
 
-### Phase 7: TUI
-- [ ] First-run setup wizard (G13)
-- [ ] Search, preview, open file or page, `o` for linked images
-- [ ] Status (queue, ETA, failed) and Folders views
-- [ ] Update notice and mismatch banner
+### Phase 7: TUI ✅ Completed (2026-10-06), human double-click test still to do
+- [x] First-run setup wizard (G13), `internal/tui` (Bubble Tea, Bubbles, Lip Gloss).
+  - Steps: welcome (shows the folder), folder picker (everything, or chosen subfolders), CC BY-NC license, download plan with sizes, installing with progress bar and notes, and retry on error (finished parts are kept).
+  - Bare `ragalay` in a terminal (double-click) opens it. When piped or scripted it prints help.
+  - With no `.ragalay` found, it sets up **in the binary's own folder** (drag-and-drop model), or the cwd for `go run` builds.
+  - Already set up: straight to search.
+- [x] Search, preview, open file or page, `o` for linked images.
+  - The results list plus a preview box, sized to the window.
+  - Enter opens the file in the OS default app (for a linked image, its Markdown file). `o` opens the image itself.
+  - Default viewers can't jump to a PDF page, so the page is shown in the result instead.
+- [x] Status (queue, ETA, failed) and Folders views.
+  - While the window is open, background watching and indexing run (it holds the index lock). Progress and ETA appear in the header and Status.
+  - Another indexer gives a warning instead of a fight.
+  - Folders: `a` add, `d` remove (drop docs), `x` remove but keep searchable.
+  - `r` rescans. Watch runs are numbered, so a stale "stopped" message can't kill a newer watch.
+- [x] Update notice and mismatch banner.
+  - `internal/update` checks GitHub's latest release at most once a day (cached in the user cache, `[update] check = false` turns it off, dev builds never check).
+  - Mismatch banner: `R` stops the watcher, rebuilds, and restarts it.
 - **Exit:** a non-technical tester double-clicks the binary in a fresh folder and reaches working search without typing a command.
+  - ✅ `internal/tui` tests (fake backend) cover the full first-run wizard to search and open, folders, and mismatch rebuild.
+  - ✅ `TestDoubleClickToSearch` (real backend, real models, RX 9070 XT): fresh folder → welcome → Enter → Enter → background indexing → typed question → the right note ranked first with its preview, in 32 s.
+  - ⏳ **A human double-click test by a non-technical tester (Windows and Mac) is still pending.** I can't click; it's part of the Phase 8 drop-in test.
 
 ### Phase 8: Release and docs
 - [ ] goreleaser for 5 targets, GitHub Actions matrix (windows, macos, ubuntu) running tests

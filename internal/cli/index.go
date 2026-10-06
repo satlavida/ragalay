@@ -28,6 +28,11 @@ var errNotSetUp = errors.New(`the AI models are not set up on this computer; run
 // indexQueue runs the indexing queue with the real models. The caller holds
 // the index lock. quiet suppresses progress output (JSON mode).
 func (a *app) indexQueue(ctx context.Context, root string, cfg config.Config, quiet bool) (*index.Summary, error) {
+	return a.indexQueueWith(ctx, root, cfg, quiet, nil)
+}
+
+// indexQueueWith is indexQueue with a progress callback (the TUI).
+func (a *app) indexQueueWith(ctx context.Context, root string, cfg config.Config, quiet bool, onProgress func(index.Progress)) (*index.Summary, error) {
 	cache, err := setup.CacheDir()
 	if err != nil {
 		return nil, err
@@ -74,7 +79,14 @@ func (a *app) indexQueue(ctx context.Context, root string, cfg config.Config, qu
 	var p *progressLine
 	if !quiet {
 		p = &progressLine{w: a.stdout, tty: isTerminal(a.stdout)}
-		r.Progress = p.update
+	}
+	r.Progress = func(pr index.Progress) {
+		if p != nil {
+			p.update(pr)
+		}
+		if onProgress != nil {
+			onProgress(pr)
+		}
 	}
 	sum, err := r.Run(ctx)
 	if p != nil {

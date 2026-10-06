@@ -14,6 +14,7 @@ import (
 
 	"github.com/satlavida/ragalay/internal/config"
 	"github.com/satlavida/ragalay/internal/store"
+	"github.com/satlavida/ragalay/internal/tui"
 )
 
 // Exit codes (plan1 §4.7). Agents rely on these.
@@ -85,8 +86,14 @@ AI agents (via --json output or MCP) can search them. Nothing leaves your machin
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// The TUI (and its setup wizard) arrives in plan1 Phase 7.
-			return cmd.Help()
+			// Double-clicked or run bare in a terminal: the window interface
+			// with its first-run wizard. Piped or scripted: help.
+			if !a.interactive() || !isTerminal(a.stdout) {
+				return cmd.Help()
+			}
+			b := &tuiBackend{a: a}
+			defer b.close()
+			return tui.Run(b)
 		},
 	}
 	cmd.PersistentFlags().StringVar(&a.rootFlag, "root", "",
