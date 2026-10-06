@@ -1,6 +1,6 @@
 # Plan 1: ragalay core (MD, PDF, images → hybrid search via CLI, MCP, TUI)
 
-**Status:** In progress (Phases 0–2 completed 2026-10-06; next: Phase 3)
+**Status:** In progress (Phases 0–3 completed 2026-10-06; next: Phase 4)
 **Created:** 2026-10-06 · **Finalized:** 2026-10-06 (after 4 grilling rounds)
 **Follow-ups:** `plans/plan2` (audio/video, search by example), `plans/plan3` (speed, background indexing, distribution)
 
@@ -289,13 +289,34 @@ Official Go SDK, stdio. Tools: `search`, `status`, `list_documents`, `list_folde
   - ⏸ M3 Pro deferred (user, 2026-10-06).
   - Untested variants: cuda, mps, rocm-gfx1200.
 
-### Phase 3: Scan, records, pairing, lock
-- [ ] Walker over the configured folders, ignore globs, kind mapping
-- [ ] `(size, mtime)` → `sha256` change detection, deletions, **move detection** (G10)
-- [ ] `jobs` queue, crash recovery, `index.lock` (G12), short-lived DB connections with lock-retry backoff (§3.1)
-- [ ] Pairing: front matter, then `[[pairs]]`, then base name (G7)
-- [ ] `scan --watch` with fsnotify and debouncing, following folder changes
+### Phase 3: Scan, records, pairing, lock ✅ Completed (2026-10-06)
+- [x] Walker over the configured folders, ignore globs, kind mapping (`internal/scan/walk.go`).
+  - `**` globs.
+  - Hidden files and folders are always skipped.
+  - Extensions: md/markdown, pdf, png/jpg/jpeg/webp/gif/bmp.
+- [x] `(size, mtime)` → `sha256` change detection, deletions, **move detection** (G10).
+  - Only files with a new size or mtime get hashed.
+  - A moved file keeps its document id, chunks and embeddings.
+  - A file whose mtime changed but whose content didn't stays indexed.
+- [x] `jobs` queue, crash recovery, `index.lock` (G12), short-lived DB connections with lock-retry backoff (§3.1).
+  - `internal/lock`: O_EXCL lock file holding the pid. A lock left by a dead process is taken over (Windows `OpenProcess`, Unix `kill 0`).
+  - `store.RecoverInterrupted` resets `processing` → `pending`.
+  - Deleting a document also deletes its chunks and postings and fixes BM25 `df`.
+- [x] Pairing: front matter, then `[[pairs]]`, then base name (G7).
+  - Three passes, so the more specific rule wins regardless of file order.
+  - Pairs are stored both ways.
+  - Ambiguous names and broken `source:` give warnings.
+- [x] `scan --watch` with fsnotify and debouncing, following folder changes.
+  - Recursive watching (new folders get added).
+  - A 2 s debounce.
+  - `config.toml` changes are reloaded (an invalid config keeps the previous settings).
+  - A safety rescan every 10 min.
+- **Design change: `[scan] keep`.** `folders remove --keep` now moves the folder into an explicit `keep` list (its documents stay searchable, new files aren't picked up). Anything outside `folders` + `keep` is dropped. That includes folders removed by editing `config.toml` by hand, which before was indistinguishable from `--keep`.
+- New commands: `scan [--watch] [--json]` (exit 5 when another indexer holds the lock) and `docs [--status] [--kind] [--json]`. `status` shows the queue, pairs and the running indexer. Ctrl+C cancels cleanly.
+- `status` now reports setup readiness from the machine-wide state, so a new folder on a set-up computer shows "ready".
 - **Exit:** add/edit/move/delete/pair in test folders shows correctly in `status --json`. A second indexer is refused cleanly.
+  - ✅ `TestPhase3Flow` (CLI) and `internal/scan` tests.
+  - ✅ By hand with the real binary: the watcher picked up dropped files within ~3 s, front matter paired a transcription with its PDF, a second `scan` exited 5 naming the watcher's pid, and a lock left by a killed watcher was taken over.
 
 ### Phase 4: Extraction and chunking
 - [ ] MD: goldmark AST, heading paths, front matter, image links resolved per G6, `doc_links`

@@ -2,11 +2,13 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 
 	"github.com/spf13/cobra"
 
@@ -55,7 +57,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, isTTY func() 
 	cmd.SetArgs(args)
 	cmd.SetOut(stdout)
 	cmd.SetErr(stderr)
-	err := cmd.Execute()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	err := cmd.ExecuteContext(ctx)
 	if err == nil {
 		return ExitOK
 	}
@@ -87,7 +91,7 @@ AI agents (via --json output or MCP) can search them. Nothing leaves your machin
 	}
 	cmd.PersistentFlags().StringVar(&a.rootFlag, "root", "",
 		"ragalay directory (default: search upward from the current folder, then from the binary; env RAGALAY_ROOT)")
-	cmd.AddCommand(a.initCmd(), a.foldersCmd(), a.setupCmd(), a.statusCmd(), a.versionCmd())
+	cmd.AddCommand(a.initCmd(), a.foldersCmd(), a.setupCmd(), a.scanCmd(), a.docsCmd(), a.statusCmd(), a.versionCmd())
 	return cmd
 }
 

@@ -7,6 +7,7 @@
 - Module: `github.com/satlavida/ragalay` (Go 1.26). `spikes/` is a separate throwaway module (Phase 0 experiments)
 - Layout: `cmd/ragalay` (main) → `internal/cli` (cobra commands) → `internal/config` (config.toml, root discovery, folders) and `internal/store` (Turso schema, migrations, queries, query cache)
 - Models: `internal/setup` (machine-wide install into the user cache; every download pinned in `pins.go`), `internal/sidecar` (Python omni indexing process; `sidecar.py` is embedded), `internal/llama` (in-process query embedding via yzma), `internal/embed` (shared types and vector helpers), `internal/download` (pinned, resumable downloads)
+- Indexing: `internal/scan` (walk, change/move detection, MD↔PDF pairing, watch) under `internal/lock` (single indexer). Anything that writes the index must hold the lock
 - `go test ./...` includes `TestBothRuntimesOnThisMachine`, which uses the real models when `ragalay setup` has run (skipped otherwise, or with `-short`)
 - Database access always goes through `store.With` (short-lived connection + lock retry; Turso locks the file per process on Windows)
 - Entry point: `cmd/ragalay/main.go`

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/satlavida/ragalay/internal/lock"
 )
 
 func runCLI(t *testing.T, args ...string) (int, string, string) {
@@ -111,6 +113,82 @@ func TestVersion(t *testing.T) {
 	var v map[string]any
 	if code != ExitOK || json.Unmarshal([]byte(out), &v) != nil || v["version"] != "dev" {
 		t.Fatalf("version --json: %d %s", code, out)
+	}
+}
+
+// TestPhase3Flow is plan1 Phase 3's exit criterion: add/edit/move/delete/pair
+// files show correctly in status --json, and a second indexer is refused.
+func TestPhase3Flow(t *testing.T) {
+	t.Setenv("RAGALAY_CACHE", t.TempDir())
+	root := t.TempDir()
+	t.Chdir(root)
+	put := func(rel, body string) {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(body), 0o644)
+	}
+	scanJSON := func() map[string]any {
+		t.Helper()
+		code, out, stderr := runCLI(t, "scan", "--json")
+		if code != ExitOK {
+			t.Fatalf("scan: %d %s", code, stderr)
+		}
+		var rep map[string]any
+		if err := json.Unmarshal([]byte(out), &rep); err != nil {
+			t.Fatalf("scan --json: %v\n%s", err, out)
+		}
+		return rep
+	}
+	status := func() StatusReport {
+		t.Helper()
+		_, out, _ := runCLI(t, "status", "--json")
+		var rep StatusReport
+		json.Unmarshal([]byte(out), &rep)
+		return rep
+	}
+
+	runCLI(t, "init")
+	put("md/report.md", "# Report transcription")
+	put("pdf/report.pdf", "%PDF-report")
+	put("photos/cat.png", "png")
+	if rep := scanJSON(); len(rep["new"].([]any)) != 3 || len(rep["pairs"].([]any)) != 1 {
+		t.Fatalf("first scan: %v", rep)
+	}
+	if s := status(); s.Index.Documents != 3 || s.Index.ByStatus["pending"] != 3 || s.Queued != 3 || s.Pairs != 1 || s.Indexing != nil {
+		t.Fatalf("status after first scan: %+v", s)
+	}
+
+	put("md/report.md", "# Report transcription, edited")
+	os.Rename(filepath.Join(root, "photos", "cat.png"), filepath.Join(root, "photos", "kitty.png"))
+	os.Remove(filepath.Join(root, "pdf", "report.pdf"))
+	rep := scanJSON()
+	if len(rep["changed"].([]any)) != 1 || len(rep["moved"].([]any)) != 1 || len(rep["deleted"].([]any)) != 1 {
+		t.Fatalf("second scan: %v", rep)
+	}
+	if s := status(); s.Index.Documents != 2 || s.Pairs != 0 {
+		t.Fatalf("status after second scan: %+v", s)
+	}
+	code, out, _ := runCLI(t, "docs", "--json", "--kind", "image")
+	var docs []DocInfo
+	if code != ExitOK || json.Unmarshal([]byte(out), &docs) != nil || len(docs) != 1 || docs[0].Path != "photos/kitty.png" {
+		t.Fatalf("docs --kind image: %s", out)
+	}
+
+	// A second indexer is refused while the lock is held.
+	l, err := lock.Acquire(filepath.Join(root, ".ragalay"), "scan --watch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := runCLI(t, "scan")
+	if code != ExitLocked || !strings.Contains(stderr, "scan --watch") {
+		t.Fatalf("second indexer: code %d, %s", code, stderr)
+	}
+	if s := status(); s.Indexing == nil || s.Indexing.Command != "scan --watch" {
+		t.Fatalf("status must show the running indexer: %+v", s.Indexing)
+	}
+	l.Release()
+	if code, _, stderr := runCLI(t, "scan"); code != ExitOK {
+		t.Fatalf("scan after release: %d %s", code, stderr)
 	}
 }
 

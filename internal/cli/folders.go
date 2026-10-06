@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/spf13/cobra"
 
@@ -51,7 +52,8 @@ func (a *app) foldersListCmd() *cobra.Command {
 				return err
 			}
 			if asJSON {
-				return a.printJSON(map[string]any{"whole_directory": len(cfg.Scan.Folders) == 0, "folders": infos})
+				return a.printJSON(map[string]any{"whole_directory": len(cfg.Scan.Folders) == 0,
+					"folders": infos, "kept": cfg.Scan.Keep})
 			}
 			if len(cfg.Scan.Folders) == 0 {
 				fmt.Fprintln(a.stdout, "Indexing everything in", root)
@@ -62,6 +64,9 @@ func (a *app) foldersListCmd() *cobra.Command {
 					note = "  (missing!)"
 				}
 				fmt.Fprintf(a.stdout, "  %-30s %6d documents%s\n", f.Path, f.Documents, note)
+			}
+			for _, k := range cfg.Scan.Keep {
+				fmt.Fprintf(a.stdout, "  %-30s (kept: searchable, not scanned for new files)\n", k)
 			}
 			return nil
 		},
@@ -114,6 +119,8 @@ func (a *app) foldersAddCmd() *cobra.Command {
 				var note string
 				folders, note = config.AddFolder(folders, f)
 				fmt.Fprintln(a.stdout, note)
+				// Scanning a folder again supersedes keeping it frozen.
+				cfg.Scan.Keep = slices.DeleteFunc(cfg.Scan.Keep, func(k string) bool { return config.Covers(f, k) })
 			}
 			cfg.Scan.Folders = folders
 			return config.Save(root, cfg)
@@ -157,6 +164,11 @@ next scan, unless --keep is given.`,
 				removed = append(removed, f)
 			}
 			cfg.Scan.Folders = folders
+			if keep {
+				for _, f := range removed {
+					cfg.Scan.Keep, _ = config.AddFolder(cfg.Scan.Keep, f)
+				}
+			}
 			if err := config.Save(root, cfg); err != nil {
 				return err
 			}
@@ -164,7 +176,11 @@ next scan, unless --keep is given.`,
 				fmt.Fprintln(a.stdout, "No folders left, so ragalay will index everything in", root)
 			}
 			for _, f := range removed {
-				fmt.Fprintln(a.stdout, "removed", f)
+				if keep {
+					fmt.Fprintf(a.stdout, "removed %s (its documents stay searchable; new files there are ignored)\n", f)
+				} else {
+					fmt.Fprintln(a.stdout, "removed", f)
+				}
 			}
 			if keep || len(folders) == 0 {
 				return nil

@@ -41,8 +41,12 @@ type Scan struct {
 	// Folders to scan, slash-separated and relative to the root. Empty means
 	// the whole root.
 	Folders []string `toml:"folders"`
-	Ignore  []string `toml:"ignore"`
-	Kinds   []string `toml:"kinds"`
+	// Keep lists folders that are no longer scanned but whose documents stay
+	// searchable ("ragalay folders remove --keep"). New files there are not
+	// picked up.
+	Keep   []string `toml:"keep"`
+	Ignore []string `toml:"ignore"`
+	Kinds  []string `toml:"kinds"`
 }
 
 // Pair maps a folder of Markdown transcriptions to the folder of their PDFs.
@@ -92,6 +96,7 @@ func Default() Config {
 	return Config{
 		Scan: Scan{
 			Folders: []string{},
+			Keep:    []string{},
 			Ignore:  []string{"**/node_modules/**", "**/.git/**"},
 			Kinds:   []string{"md", "pdf", "image"},
 		},
@@ -128,6 +133,9 @@ func Load(root string) (Config, error) {
 	}
 	if cfg.Scan.Folders == nil {
 		cfg.Scan.Folders = []string{}
+	}
+	if cfg.Scan.Keep == nil {
+		cfg.Scan.Keep = []string{}
 	}
 	return cfg, nil
 }
@@ -166,6 +174,11 @@ func (c Config) Validate() error {
 	for _, f := range c.Scan.Folders {
 		if err := checkRelative(f); err != nil {
 			errs = append(errs, fmt.Errorf("scan.folders: %q: %w", f, err))
+		}
+	}
+	for _, f := range c.Scan.Keep {
+		if err := checkRelative(f); err != nil {
+			errs = append(errs, fmt.Errorf("scan.keep: %q: %w", f, err))
 		}
 	}
 	for _, k := range c.Scan.Kinds {
