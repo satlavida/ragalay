@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -127,14 +129,24 @@ func DeleteDocument(ctx context.Context, tx *sql.Tx, id int64) error {
 		WHERE id IN (SELECT p.term_id FROM postings p JOIN chunks c ON c.id = p.chunk_id WHERE c.document_id = ?1)`,
 		`DELETE FROM postings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?1)`,
 		`DELETE FROM chunks WHERE document_id = ?1`,
-		`DELETE FROM doc_links WHERE parent_id = ?1 OR child_id = ?1`,
+		// Images this document linked are indexed on their own again.
+		`UPDATE documents SET status = 'pending' WHERE path IN (SELECT child_path FROM doc_links WHERE parent_id = ?1)`,
+		`INSERT INTO jobs (document_id, state, attempts, enqueued_at)
+			SELECT id, 'queued', 0, ?2 FROM documents WHERE path IN (SELECT child_path FROM doc_links WHERE parent_id = ?1)
+			ON CONFLICT (document_id) DO UPDATE SET state = 'queued', attempts = 0`,
+		`DELETE FROM doc_links WHERE parent_id = ?1`,
 		`DELETE FROM jobs WHERE document_id = ?1`,
 		`UPDATE documents SET pair_document_id = NULL WHERE pair_document_id = ?1`,
 		`DELETE FROM documents WHERE id = ?1`,
 	}
+	now := time.Now().Unix()
 	for _, s := range stmts {
-		if _, err := tx.ExecContext(ctx, s, id); err != nil {
-			return err
+		args := []any{id}
+		if strings.Contains(s, "?2") {
+			args = append(args, now)
+		}
+		if _, err := tx.ExecContext(ctx, s, args...); err != nil {
+			return fmt.Errorf("%w\n%s", err, s)
 		}
 	}
 	return nil

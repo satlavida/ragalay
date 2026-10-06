@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -10,12 +11,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/satlavida/ragalay/internal/config"
+	indexpkg "github.com/satlavida/ragalay/internal/index"
 	"github.com/satlavida/ragalay/internal/lock"
 	"github.com/satlavida/ragalay/internal/scan"
 )
 
 func (a *app) scanCmd() *cobra.Command {
-	var watch, asJSON bool
+	var watch, noIndex, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "scan",
 		Short: "Find new, changed, moved and deleted files",
@@ -40,32 +42,62 @@ Only one ragalay process can scan or index a folder at a time.`,
 				name = "scan --watch"
 			}
 			l, err := lock.Acquire(filepath.Join(root, config.DirName), name)
-			var held *lock.HeldError
-			if errors.As(err, &held) {
-				return &exitError{ExitLocked, err}
-			}
 			if err != nil {
-				return err
+				return lockErr(err)
 			}
 			defer l.Release()
+			ctx := cmd.Context()
+
+			// index runs the queue after a scan; it returns the summary (or
+			// why indexing was skipped) for the JSON output.
+			runIndex := func(rep scan.Report) (*indexpkg.Summary, string, error) {
+				if noIndex {
+					return nil, "", nil
+				}
+				// A changed model blocks indexing even when nothing is queued,
+				// so the problem is reported straight away (exit 2).
+				if err := indexpkg.CheckSpace(ctx, root, cfg); err != nil {
+					return nil, "", err
+				}
+				if rep.Queued == 0 {
+					return nil, "", nil
+				}
+				sum, err := a.indexQueue(ctx, root, cfg, asJSON)
+				switch {
+				case errors.Is(err, errNotSetUp):
+					if !asJSON {
+						fmt.Fprintln(a.stdout, "Not indexed yet:", err)
+					}
+					return nil, err.Error(), nil
+				case errors.Is(err, context.Canceled):
+					return sum, "", nil
+				}
+				return sum, "", err
+			}
 
 			if !watch {
-				rep, err := scan.Run(cmd.Context(), root, cfg)
+				rep, err := scan.Run(ctx, root, cfg)
 				if err != nil {
 					return err
 				}
-				if asJSON {
-					return a.printJSON(rep)
+				if !asJSON {
+					a.printScan(rep, false)
 				}
-				a.printScan(rep, false)
-				return nil
+				sum, skipped, err := runIndex(rep)
+				if asJSON {
+					a.printJSON(scanOutput{Report: rep, Index: sum, IndexSkipped: skipped, Error: errText(err)})
+				}
+				if mm := (*indexpkg.ErrModelMismatch)(nil); errors.As(err, &mm) {
+					return &exitError{ExitModelMismatch, err}
+				}
+				return err
 			}
 
 			if !asJSON {
 				fmt.Fprintln(a.stdout, "Watching for changes. Press Ctrl+C to stop.")
 			}
 			first := true
-			err = scan.Watch(cmd.Context(), root, 2*time.Second, func(rep scan.Report, err error) {
+			err = scan.Watch(ctx, root, 2*time.Second, func(rep scan.Report, err error) {
 				shown := first
 				first = false
 				switch {
@@ -73,21 +105,44 @@ Only one ragalay process can scan or index a folder at a time.`,
 					a.printJSONLine(map[string]any{"time": time.Now(), "error": err.Error()})
 				case err != nil:
 					fmt.Fprintf(a.stderr, "%s  error: %v\n", time.Now().Format("15:04:05"), err)
-				case asJSON:
-					a.printJSONLine(map[string]any{"time": time.Now(), "scan": rep})
-				case shown || rep.Changes() || len(rep.Warnings) > 0:
-					a.printScan(rep, true) // always show the first scan so people see it working
+				default:
+					if !asJSON && (shown || rep.Changes() || len(rep.Warnings) > 0) {
+						a.printScan(rep, true) // always show the first scan so people see it working
+					}
+					sum, skipped, ierr := runIndex(rep)
+					if asJSON {
+						a.printJSONLine(map[string]any{"time": time.Now(), "scan": rep, "index": sum,
+							"index_skipped": skipped, "error": errText(ierr)})
+					} else if ierr != nil {
+						fmt.Fprintf(a.stderr, "%s  error: %v\n", time.Now().Format("15:04:05"), ierr)
+					}
 				}
 			})
-			if cmd.Context().Err() != nil {
+			if ctx.Err() != nil {
 				return nil // Ctrl+C
 			}
 			return err
 		},
 	}
 	cmd.Flags().BoolVar(&watch, "watch", false, "keep running and rescan when files change")
+	cmd.Flags().BoolVar(&noIndex, "no-index", false, "only update the document list, do not embed")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output (one JSON object per scan with --watch)")
 	return cmd
+}
+
+// scanOutput is `scan --json`: the scan report plus what indexing did.
+type scanOutput struct {
+	scan.Report
+	Index        *indexpkg.Summary `json:"index"`
+	IndexSkipped string            `json:"index_skipped,omitempty"`
+	Error        string            `json:"error,omitempty"`
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (a *app) printScan(r scan.Report, stamped bool) {

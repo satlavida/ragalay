@@ -10,12 +10,36 @@ import (
 
 // SchemaVersion is the schema this binary writes. Migrations upgrade older
 // databases step by step; a newer database is refused.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // migrations[i] upgrades from version i to i+1. The chunks table depends on
 // the embedding dimension, so steps get it as a parameter.
 var migrations = []func(ctx context.Context, tx *sql.Tx, dim int) error{
 	migrateV1,
+	migrateV2,
+}
+
+// migrateV2 (plan1 Phase 5): chunks remember the file a linked image came
+// from, and doc_links point at image paths (a linked image need not be a
+// document of its own).
+func migrateV2(ctx context.Context, tx *sql.Tx, dim int) error {
+	for _, s := range []string{
+		`ALTER TABLE chunks ADD COLUMN source_path TEXT`,
+		`ALTER TABLE chunks ADD COLUMN bm25_len INTEGER NOT NULL DEFAULT 0`,
+		`DROP TABLE doc_links`,
+		`CREATE TABLE doc_links (
+			parent_id INTEGER NOT NULL,
+			child_path TEXT NOT NULL,
+			heading_path TEXT,
+			alt_text TEXT,
+			PRIMARY KEY (parent_id, child_path))`,
+		`CREATE INDEX doc_links_child ON doc_links (child_path)`,
+	} {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("%w\n%s", err, s)
+		}
+	}
+	return nil
 }
 
 func migrateV1(ctx context.Context, tx *sql.Tx, dim int) error {
@@ -43,7 +67,7 @@ func migrateV1(ctx context.Context, tx *sql.Tx, dim int) error {
 			heading_path TEXT,
 			alt_text TEXT,
 			PRIMARY KEY (parent_id, child_id))`,
-		chunksDDL(dim),
+		chunksV1DDL(dim),
 		`CREATE INDEX chunks_document ON chunks (document_id)`,
 		`CREATE TABLE terms (id INTEGER PRIMARY KEY, term TEXT NOT NULL UNIQUE, df INTEGER NOT NULL DEFAULT 0)`,
 		`CREATE TABLE postings (
@@ -78,10 +102,10 @@ func migrateV1(ctx context.Context, tx *sql.Tx, dim int) error {
 	return SetMeta(ctx, tx, "created_at", strconv.FormatInt(time.Now().Unix(), 10))
 }
 
-// chunksDDL is shared with re-embedding, which recreates the table when the
-// dimension changes. Turso does not enforce the declared F32_BLOB dimension,
-// so writers must check vector length before inserting.
-func chunksDDL(dim int) string {
+// chunksV1DDL is the chunks table as schema v1 created it. Turso does not
+// enforce the declared F32_BLOB dimension, so writers must check vector
+// length before inserting.
+func chunksV1DDL(dim int) string {
 	return fmt.Sprintf(`CREATE TABLE chunks (
 		id INTEGER PRIMARY KEY,
 		document_id INTEGER NOT NULL,
@@ -92,6 +116,23 @@ func chunksDDL(dim int) string {
 		page INTEGER,
 		token_count INTEGER NOT NULL DEFAULT 0,
 		embedding F32_BLOB(%d))`, dim)
+}
+
+// chunksDDL is the chunks table at SchemaVersion; re-embedding recreates it
+// with a new dimension.
+func chunksDDL(dim int) string {
+	return fmt.Sprintf(`CREATE TABLE chunks (
+		id INTEGER PRIMARY KEY,
+		document_id INTEGER NOT NULL,
+		ord INTEGER NOT NULL,
+		modality TEXT NOT NULL,
+		text TEXT,
+		heading_path TEXT,
+		page INTEGER,
+		token_count INTEGER NOT NULL DEFAULT 0,
+		embedding F32_BLOB(%d),
+		source_path TEXT,
+		bm25_len INTEGER NOT NULL DEFAULT 0)`, dim)
 }
 
 // Version returns the database's schema version, 0 for an empty database.

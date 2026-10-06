@@ -1,6 +1,6 @@
 # Plan 1: ragalay core (MD, PDF, images → hybrid search via CLI, MCP, TUI)
 
-**Status:** In progress (Phases 0–4 completed 2026-10-06; next: Phase 5)
+**Status:** In progress (Phases 0–5 completed 2026-10-06; next: Phase 6)
 **Created:** 2026-10-06 · **Finalized:** 2026-10-06 (after 4 grilling rounds)
 **Follow-ups:** `plans/plan2` (audio/video, search by example), `plans/plan3` (speed, background indexing, distribution)
 
@@ -336,11 +336,26 @@ Official Go SDK, stdio. Tools: `search`, `status`, `list_documents`, `list_folde
   - Tokens are counted by a `Tokenizer` interface. Production uses the real Qwen3 tokenizer via `llama.Embedder.Count`; tests use a deterministic estimate.
 - **Exit:** golden tests pass for MD + linked images, text PDF, scanned PDF, and standalone images. ✅ `internal/extract/testdata/*.golden.json` (regenerate with `go test ./internal/extract -update`), plus spot checks. PDFs are generated in the test, so no binary fixtures are committed.
 
-### Phase 5: Ingest and model swap
-- [ ] Job runner: priority order, batching, one transaction per document, retries, ETA, resume after quit (G18)
-- [ ] Store vectors and populate the BM25 `terms`/`postings` tables in the same transaction
-- [ ] `embed_id` mismatch → exit 2 / banner, resumable `reembed` that clears the cache
+### Phase 5: Ingest and model swap ✅ Completed (2026-10-06)
+- [x] Job runner: priority order, batching, one transaction per document, retries, ETA, resume after quit (G18): `internal/index`.
+  - Order is Markdown, then PDF, then images. Embedding calls go in batches of 16.
+  - The sidecar starts only when a document actually needs embedding, so an empty queue never starts Python.
+  - Failures are marked `failed` with a reason and retried once per run, up to 3 attempts.
+  - An interrupted document goes back to the queue.
+  - ETA uses per-kind moving averages, kept in `meta` across runs.
+  - **Linked-image dedup** (deferred from Phase 4): an image an MD links gets 0 chunks of its own ("indexed with the Markdown file that shows it"). If the MD stops linking it, or the MD is deleted, the image is re-queued to be indexed alone.
+- [x] Store vectors and populate the BM25 `terms`/`postings` tables in the same transaction.
+  - `store.ReplaceChunks` checks vector dimension (Turso doesn't) and keeps `df` exact across replaces.
+  - `internal/bm25` holds the shared tokenizer and scoring.
+  - Schema v2: `chunks.source_path` (file of a linked image), `chunks.bm25_len`, and `doc_links` keyed by `child_path`.
+- [x] `embed_id` mismatch → exit 2 / banner, resumable `reembed` that clears the cache.
+  - `embed_id` = model@rev7:dim. A fresh index adopts the config's space.
+  - `scan` exits 2 on a mismatch even with nothing queued. `status` shows a banner.
+  - `reembed [--force]` recreates `chunks` at the new dim and clears BM25 and the query cache. The new id is recorded first, so an interrupted rebuild continues with `scan`.
+- `scan` now indexes after scanning (`--no-index` to skip), and `scan --watch` indexes after each scan. On a set-up machine indexing just runs; otherwise documents stay queued with a clear message. `scan --json` = scan report + `index` summary.
 - **Exit:** a mixed sample folder indexes end to end, survives being killed mid-run, and a change to `dim` triggers a re-embed.
+  - ✅ Unit tests (`internal/index`, fake embedder): end to end, linked dedup, paired PDF, broken PDF retry limit, cancellation mid-embed, dim change → mismatch → reembed at 512.
+  - ✅ Real models on the RX 9070 XT: papers + paired transcription + linked and standalone images + scanned PDF went to 126 chunks in 40 s. `taskkill /F` mid-run left one document `processing`, and the next `scan` recovered it and finished. Changing `dim` to 512 gave the banner and exit 2, and `reembed` rebuilt everything at 512 dims.
 
 ### Phase 6: Search and MCP
 - [ ] Vector + BM25 + RRF, modes, filters, pair dedup, `--group-by doc`, `--max-chars`, stable JSON

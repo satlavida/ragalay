@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/satlavida/ragalay/internal/config"
+	"github.com/satlavida/ragalay/internal/index"
 	"github.com/satlavida/ragalay/internal/lock"
 	"github.com/satlavida/ragalay/internal/setup"
 	"github.com/satlavida/ragalay/internal/store"
@@ -27,6 +28,15 @@ type StatusReport struct {
 	Queued        int          `json:"queued"`   // documents waiting to be indexed
 	Pairs         int          `json:"pairs"`    // Markdown ↔ PDF links
 	Indexing      *lock.Info   `json:"indexing"` // the process holding the index lock, if any
+	// ModelMismatch is set when the settings ask for a different vector
+	// space than the index was built with (run `ragalay reembed`).
+	ModelMismatch *Mismatch `json:"model_mismatch"`
+}
+
+// Mismatch names both vector spaces.
+type Mismatch struct {
+	Index  string `json:"index"`
+	Config string `json:"config"`
 }
 
 // SetupInfo is the machine-wide setup state (shared cache).
@@ -73,6 +83,9 @@ func (a *app) statusCmd() *cobra.Command {
 			if info, alive := lock.Read(filepath.Join(root, config.DirName)); alive {
 				rep.Indexing = &info
 			}
+			if want := index.SpaceID(cfg); rep.Index.EmbedID != "" && rep.Index.EmbedID != want {
+				rep.ModelMismatch = &Mismatch{Index: rep.Index.EmbedID, Config: want}
+			}
 			if err != nil {
 				return err
 			}
@@ -97,6 +110,9 @@ func (a *app) statusCmd() *cobra.Command {
 func (a *app) printStatus(r StatusReport) {
 	w := a.stdout
 	fmt.Fprintf(w, "ragalay %s in %s\n\n", r.Version, r.Root)
+	if m := r.ModelMismatch; m != nil {
+		fmt.Fprintf(w, "!! The settings changed the model (%s -> %s).\n!! Search is off until you run \"ragalay reembed\".\n\n", m.Index, m.Config)
+	}
 	if len(r.ConfigErrors) > 0 {
 		fmt.Fprintln(w, "Problems in .ragalay/config.toml:")
 		for _, e := range r.ConfigErrors {

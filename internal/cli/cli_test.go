@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/satlavida/ragalay/internal/lock"
+	"github.com/satlavida/ragalay/internal/store"
 )
 
 func runCLI(t *testing.T, args ...string) (int, string, string) {
@@ -65,7 +66,7 @@ func TestPhase1Flow(t *testing.T) {
 		t.Fatalf("status --json is not JSON: %v\n%s", err, out)
 	}
 	if rep.WholeDir || len(rep.Folders) != 2 || rep.Folders[0].Path != "docs" || rep.Folders[1].Path != "notes" ||
-		!rep.Folders[0].Exists || rep.Index.SchemaVersion != 1 || rep.Index.EmbedDim != 1024 ||
+		!rep.Folders[0].Exists || rep.Index.SchemaVersion != store.SchemaVersion || rep.Index.EmbedDim != 1024 ||
 		rep.SetupComplete || len(rep.ConfigErrors) != 0 {
 		t.Fatalf("unexpected status: %+v", rep)
 	}
