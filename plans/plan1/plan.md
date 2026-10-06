@@ -1,6 +1,6 @@
 # Plan 1: ragalay core (MD, PDF, images → hybrid search via CLI, MCP, TUI)
 
-**Status:** In progress (Phase 0 completed 2026-10-06; next: Phase 1)
+**Status:** In progress (Phases 0–1 completed 2026-10-06; next: Phase 2)
 **Created:** 2026-10-06 · **Finalized:** 2026-10-06 (after 4 grilling rounds)
 **Follow-ups:** `plans/plan2` (audio/video, search by example), `plans/plan3` (speed, background indexing, distribution)
 
@@ -252,13 +252,16 @@ Official Go SDK, stdio. Tools: `search`, `status`, `list_documents`, `list_folde
 - [x] Record the results in §3 and adjust defaults
 - **Exit:** every bullet has a working proof on Windows, and the choices are recorded in this plan. **Mac checks are deferred** (user, 2026-10-06) and get re-run before the Phase 8 drop-in test.
 
-### Phase 1: Skeleton, config, store
-- [ ] Rename module to `github.com/satlavida/ragalay`. Add Apache-2.0 `LICENSE`
-- [ ] Package layout `internal/{config,store,scan,extract,chunk,embed,sidecar,llama,search,mcp,tui,update}`
-- [ ] Cobra CLI, root discovery, `init`, `config.toml` defaults and validation
-- [ ] `folders add/remove/list`, rejecting paths outside the root (G5)
-- [ ] Schema plus migrations (§4.3), `status --json`
-- **Exit:** `ragalay init && ragalay folders add docs && ragalay status --json` works on Windows, and CI builds all 5 targets.
+### Phase 1: Skeleton, config, store ✅ Completed (2026-10-06)
+- [x] Rename module to `github.com/satlavida/ragalay`. Add Apache-2.0 `LICENSE`. Spikes moved to their own module (`spikes/go.mod`) so their deps stay out of the product
+- [x] Package layout `internal/{config,store,scan,extract,chunk,embed,sidecar,llama,search,mcp,tui,update}`: `config`, `store`, `cli` exist now. The others are created in the phase that fills them (no empty stubs)
+- [x] Cobra CLI, root discovery (`--root` / `RAGALAY_ROOT`, then walk up from cwd, then from the binary's folder), `init`, `config.toml` defaults and validation (unknown keys rejected, all errors reported at once)
+- [x] `folders add/remove/list`, rejecting paths outside the root (G5). Empty list = whole directory. Overlaps are normalized, and removal marks documents `stale` unless `--keep`
+- [x] Schema plus migrations (§4.3), `status --json`. `store.With` = short-lived connection + lock-retry, tested against a real second process
+- **Exit:** `ragalay init && ragalay folders add docs && ragalay status --json` works on an empty folder on Windows, and CI builds all 5 targets.
+  - ✅ Verified on Windows: by hand in a fresh folder, and in `internal/cli` tests.
+  - ✅ All 5 targets cross-compile with `CGO_ENABLED=0`. `.github/workflows/ci.yml` (test on windows/macos/ubuntu + cross-build) is written but **hasn't run yet**: no GitHub remote. It runs on the first push.
+  - Found: Turso doesn't enforce the `F32_BLOB(N)` dimension, so writers must check vector length (Phase 5).
 
 ### Phase 2: Runtimes and setup
 - [ ] Shared cache, downloader (progress, checksum, resume), `uv` fetch (G9)

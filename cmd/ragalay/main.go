@@ -1,7 +1,11 @@
 package main
 
-import "fmt"
+import (
+	"os"
+
+	"github.com/satlavida/ragalay/internal/cli"
+)
 
 func main() {
-	fmt.Println("ragalay: not implemented yet, see plans/plan1/plan.md")
+	os.Exit(cli.Execute())
 }

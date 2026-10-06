@@ -1,0 +1,119 @@
+package cli
+
+import (
+	"database/sql"
+	"fmt"
+	"slices"
+
+	"github.com/spf13/cobra"
+
+	"github.com/satlavida/ragalay/internal/config"
+	"github.com/satlavida/ragalay/internal/store"
+)
+
+// StatusReport is the stable `status --json` schema.
+type StatusReport struct {
+	Root          string       `json:"root"`
+	Version       string       `json:"version"`
+	ConfigErrors  []string     `json:"config_errors"`
+	Folders       []FolderInfo `json:"folders"`
+	WholeDir      bool         `json:"whole_directory"`
+	SetupComplete bool         `json:"setup_complete"`
+	Index         store.Stats  `json:"index"`
+}
+
+func (a *app) statusCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show what ragalay has indexed",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			root, err := a.root()
+			if err != nil {
+				return err
+			}
+			cfg, err := config.Load(root)
+			if err != nil {
+				return err
+			}
+			rep := StatusReport{Root: root, Version: Version, ConfigErrors: []string{}, WholeDir: len(cfg.Scan.Folders) == 0}
+			if verr := cfg.Validate(); verr != nil {
+				rep.ConfigErrors = splitErrors(verr)
+			}
+			if rep.Folders, err = folderInfos(cmd.Context(), root, cfg); err != nil {
+				return err
+			}
+			err = store.With(cmd.Context(), dbPath(root), func(db *sql.DB) error {
+				rep.Index, err = store.ReadStats(cmd.Context(), db)
+				return err
+			})
+			if err != nil {
+				return err
+			}
+			rep.SetupComplete = rep.Index.SetupComplete
+			if asJSON {
+				return a.printJSON(rep)
+			}
+			a.printStatus(rep)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")
+	return cmd
+}
+
+func (a *app) printStatus(r StatusReport) {
+	w := a.stdout
+	fmt.Fprintf(w, "ragalay %s in %s\n\n", r.Version, r.Root)
+	if len(r.ConfigErrors) > 0 {
+		fmt.Fprintln(w, "Problems in .ragalay/config.toml:")
+		for _, e := range r.ConfigErrors {
+			fmt.Fprintln(w, "  -", e)
+		}
+		fmt.Fprintln(w)
+	}
+	if r.WholeDir {
+		fmt.Fprintln(w, "Folders: everything in this directory")
+	} else {
+		fmt.Fprintln(w, "Folders:")
+	}
+	for _, f := range r.Folders {
+		note := ""
+		if !f.Exists {
+			note = "  (missing!)"
+		}
+		fmt.Fprintf(w, "  %-30s %6d documents%s\n", f.Path, f.Documents, note)
+	}
+	fmt.Fprintf(w, "\nDocuments: %d", r.Index.Documents)
+	if r.Index.Documents > 0 {
+		keys := make([]string, 0, len(r.Index.ByStatus))
+		for k := range r.Index.ByStatus {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		fmt.Fprint(w, " (")
+		for i, k := range keys {
+			if i > 0 {
+				fmt.Fprint(w, ", ")
+			}
+			fmt.Fprintf(w, "%d %s", r.Index.ByStatus[k], k)
+		}
+		fmt.Fprint(w, ")")
+	}
+	fmt.Fprintf(w, "\nChunks:    %d\n", r.Index.Chunks)
+	if !r.SetupComplete {
+		fmt.Fprintln(w, "\nSetup has not run yet: the models are not downloaded.")
+	}
+}
+
+func splitErrors(err error) []string {
+	if u, ok := err.(interface{ Unwrap() []error }); ok {
+		var out []string
+		for _, e := range u.Unwrap() {
+			out = append(out, e.Error())
+		}
+		return out
+	}
+	return []string{err.Error()}
+}

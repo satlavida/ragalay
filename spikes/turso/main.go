@@ -3,8 +3,10 @@
 // Checks F32_BLOB vectors, vector_distance_cos, ANN index + vector_top_k,
 // FTS, brute-force search speed, and a reader process alongside a writer.
 //
-// Usage: go run ./spikes/turso <dbpath>
-//        go run ./spikes/turso -reader <dbpath>   (internal, spawned by the writer)
+// Usage:
+//
+//	go run ./spikes/turso [-exp index_method] <dbpath>
+//	go run ./spikes/turso -reader <dbpath>   (internal, spawned by the writer)
 package main
 
 import (
