@@ -12,13 +12,14 @@ import (
 func runCLI(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code := run(args, &out, &errb)
+	code := run(args, strings.NewReader(""), &out, &errb, func() bool { return false })
 	return code, out.String(), errb.String()
 }
 
 // TestPhase1Flow is plan1 Phase 1's exit criterion:
 // ragalay init && ragalay folders add docs && ragalay status --json
 func TestPhase1Flow(t *testing.T) {
+	t.Setenv("RAGALAY_CACHE", t.TempDir())
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "docs", "sub"), 0o755)
 	os.MkdirAll(filepath.Join(root, "notes"), 0o755)
@@ -84,6 +85,7 @@ func TestPhase1Flow(t *testing.T) {
 }
 
 func TestRootFlagAndConfigErrors(t *testing.T) {
+	t.Setenv("RAGALAY_CACHE", t.TempDir())
 	root := t.TempDir()
 	t.Chdir(t.TempDir()) // somewhere unrelated
 	if code, _, stderr := runCLI(t, "init", root); code != ExitOK {
@@ -109,5 +111,22 @@ func TestVersion(t *testing.T) {
 	var v map[string]any
 	if code != ExitOK || json.Unmarshal([]byte(out), &v) != nil || v["version"] != "dev" {
 		t.Fatalf("version --json: %d %s", code, out)
+	}
+}
+
+func TestSetupNeedsLicenseWithoutTerminal(t *testing.T) {
+	t.Setenv("RAGALAY_CACHE", t.TempDir())
+	root := t.TempDir()
+	if code, _, stderr := runCLI(t, "init", root); code != ExitOK {
+		t.Fatalf("init: %s", stderr)
+	}
+	code, out, stderr := runCLI(t, "setup", "--root", root, "--device", "cpu")
+	if code != ExitSetupIncomplete || !strings.Contains(out, "CC BY-NC 4.0") || !strings.Contains(stderr, "--accept-license") {
+		t.Fatalf("setup without terminal: code %d\n%s\n%s", code, out, stderr)
+	}
+	// With the license accepted but no --yes, it still refuses to download silently.
+	code, out, stderr = runCLI(t, "setup", "--root", root, "--device", "cpu", "--accept-license")
+	if code != ExitSetupIncomplete || !strings.Contains(out, "To download:") || !strings.Contains(stderr, "--yes") {
+		t.Fatalf("setup without --yes: code %d\n%s\n%s", code, out, stderr)
 	}
 }

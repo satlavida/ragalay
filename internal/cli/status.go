@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/satlavida/ragalay/internal/config"
+	"github.com/satlavida/ragalay/internal/setup"
 	"github.com/satlavida/ragalay/internal/store"
 )
 
@@ -19,7 +20,17 @@ type StatusReport struct {
 	Folders       []FolderInfo `json:"folders"`
 	WholeDir      bool         `json:"whole_directory"`
 	SetupComplete bool         `json:"setup_complete"`
+	Setup         SetupInfo    `json:"setup"`
 	Index         store.Stats  `json:"index"`
+}
+
+// SetupInfo is the machine-wide setup state (shared cache).
+type SetupInfo struct {
+	Ready       bool   `json:"ready"`        // indexing and search both work
+	SearchReady bool   `json:"search_ready"` // query model installed
+	Device      string `json:"device,omitempty"`
+	DeviceName  string `json:"device_name,omitempty"`
+	CacheDir    string `json:"cache_dir"`
 }
 
 func (a *app) statusCmd() *cobra.Command {
@@ -51,7 +62,12 @@ func (a *app) statusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rep.SetupComplete = rep.Index.SetupComplete
+			if cache, err := setup.CacheDir(); err == nil {
+				st, _ := setup.LoadState(cache)
+				rep.Setup = SetupInfo{Ready: st.Ready(), SearchReady: st.QueryReady(),
+					Device: st.Device, DeviceName: st.DeviceName, CacheDir: cache}
+			}
+			rep.SetupComplete = rep.Index.SetupComplete && rep.Setup.Ready
 			if asJSON {
 				return a.printJSON(rep)
 			}
@@ -102,8 +118,10 @@ func (a *app) printStatus(r StatusReport) {
 		fmt.Fprint(w, ")")
 	}
 	fmt.Fprintf(w, "\nChunks:    %d\n", r.Index.Chunks)
-	if !r.SetupComplete {
-		fmt.Fprintln(w, "\nSetup has not run yet: the models are not downloaded.")
+	if r.SetupComplete {
+		fmt.Fprintf(w, "\nModels:    ready (indexing on %s)\n", r.Setup.DeviceName)
+	} else {
+		fmt.Fprintln(w, "\nModels:    not set up yet. Run \"ragalay setup\".")
 	}
 }
 

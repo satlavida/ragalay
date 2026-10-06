@@ -1,6 +1,6 @@
 # Plan 1: ragalay core (MD, PDF, images → hybrid search via CLI, MCP, TUI)
 
-**Status:** In progress (Phases 0–1 completed 2026-10-06; next: Phase 2)
+**Status:** In progress (Phases 0–2 completed 2026-10-06; next: Phase 3)
 **Created:** 2026-10-06 · **Finalized:** 2026-10-06 (after 4 grilling rounds)
 **Follow-ups:** `plans/plan2` (audio/video, search by example), `plans/plan3` (speed, background indexing, distribution)
 
@@ -134,15 +134,20 @@
     config.toml                  # folders, pairs, chunking, dim, update check, ignore globs
     index.db                     # documents, chunks, vectors, BM25 tables, query cache
     index.lock                   # present only while indexing (G12)
-    lib/                         # extracted Turso native lib (G17)
-    logs/
+    logs/                        # setup.log, sidecar.log
 
-<os.UserCacheDir()>/ragalay/     # shared by every root, relocatable via config
-  bin/uv(.exe)
-  py/                            # Python 3.11 venv + sidecar script
-  llama.cpp/<ver>-<backend>/
-  models/                        # GGUF + HF cache for omni weights
+<os.UserCacheDir()>/ragalay/     # shared by every root; override with RAGALAY_CACHE
+  state.json                     # what setup installed + license acceptance (machine-wide)
+  bin/uv-<ver>/uv(.exe)
+  python/                        # uv-managed Python 3.11 interpreters
+  py/<variant>/                  # venv per torch variant (cpu, cuda, mps, rocm-gfx1201, ...)
+  py/sidecar.py                  # written from the binary (go:embed)
+  llama.cpp/<ver>-cpu/
+  models/v5-small-retrieval-Q8_0.gguf
+  uv-cache/                      # unless UV_CACHE_DIR is already set
+<HF cache>                       # omni weights: Hugging Face's standard cache (honours HF_HOME), shared with other tools
 ```
+The Turso native lib is extracted by tursogo itself to `os.UserCacheDir()/<hash>/` (§3.1), not to `.ragalay/lib/`.
 
 ### 4.2 config.toml (defaults)
 ```toml
@@ -206,7 +211,7 @@ jobs(document_id PRIMARY KEY, state, attempts, last_error, enqueued_at)   -- G1/
 6. The sidecar is a long-lived child process speaking JSON-RPC over stdio, embedded with `go:embed`. It starts only when there is indexing work and exits when the queue is empty.
 
 ### 4.5 Search (no Python)
-1. Normalize the query (trim, collapse whitespace, lowercase for the cache key). Look up `query_cache`. On a miss, embed `Query: <q>` with llama.cpp (text-small GGUF), store it, and bump the hit count.
+1. Normalize the query (trim, collapse whitespace; **case is kept**, because the embedding is case-sensitive for acronyms and names; Phase 2). The cache key also includes the query model ID. Look up `query_cache`. On a miss, embed `Query: <q>` with llama.cpp (text-small GGUF), store it, and bump the hit count.
 2. Vector search (cosine, ANN if available) and BM25 over the text chunks, merged with **RRF (k=60)**. `--mode hybrid|vector|keyword`. If llama.cpp is unavailable, it falls back to keyword-only with a notice.
 3. Filters: `--modality`, `--path-glob`. **Pair dedup:** an MD hit and a PDF hit on the same page merge into one result.
 4. Output: one result per chunk (default) or `--group-by doc`. `--max-chars` (default 2000). Stable JSON:
@@ -263,13 +268,26 @@ Official Go SDK, stdio. Tools: `search`, `status`, `list_documents`, `list_folde
   - ✅ All 5 targets cross-compile with `CGO_ENABLED=0`. `.github/workflows/ci.yml` (test on windows/macos/ubuntu + cross-build) is written but **hasn't run yet**: no GitHub remote. It runs on the first push.
   - Found: Turso doesn't enforce the `F32_BLOB(N)` dimension, so writers must check vector length (Phase 5).
 
-### Phase 2: Runtimes and setup
-- [ ] Shared cache, downloader (progress, checksum, resume), `uv` fetch (G9)
-- [ ] venv plus per-device wheel selection (CUDA / ROCm gfx-specific index / MPS / CPU, always with torchvision), pinned model revision, dtype cast (GPU bf16, CPU fp32), fixed image buckets, embedded sidecar script, JSON-RPC client, lifecycle
-- [ ] llama.cpp **CPU** build fetch (yzma installer logic, sha256-pinned), Q8_0 GGUF download, yzma query embedder with `Query: ` prefix and PATH fix on Windows (G2/G4)
-- [ ] `query_cache` with LFU/TTL eviction (G3)
-- [ ] `setup` command: license record, self-test for both runtimes
+### Phase 2: Runtimes and setup ✅ Completed (2026-10-06)
+- [x] Shared cache, downloader (progress, checksum, resume), `uv` fetch (G9): `internal/download` (resume via Range, sha256, zip/tar.gz with traversal protection). uv 0.12.23 pinned per platform
+- [x] venv plus per-device wheel selection (CUDA / ROCm gfx-specific index / MPS / CPU, always with torchvision), pinned model revision, dtype cast (GPU bf16, CPU fp32), fixed image buckets, embedded sidecar script, JSON-RPC client, lifecycle: `internal/setup` + `internal/sidecar`.
+  - Detection before install: nvidia-smi → cuda (cu126); Apple Silicon → mps; Windows RX 9070/9060 → rocm-gfx1201/1200; everything else → cpu.
+  - After install, setup checks torch really sees the GPU and falls back to CPU if not.
+  - Images go into 3 fixed buckets (portrait/square/landscape, 28-px aligned).
+- [x] llama.cpp **CPU** build fetch, Q8_0 GGUF download, yzma query embedder with `Query: ` prefix and PATH fix on Windows (G2/G4): `internal/llama`.
+  - **Not yzma's installer:** it pulls in hashicorp/go-getter and cloud SDKs. Instead, llama.cpp b11146 asset URLs and sha256s (from yzma's manifest) are pinned in `internal/setup/pins.go` and fetched with our downloader.
+- [x] `query_cache` with LFU/TTL eviction (G3): `store.CachedQuery/PutQuery/EvictQueries/ClearQueries`
+- [x] `setup` command: license record, self-test for both runtimes.
+  - License acceptance is recorded once per machine (`state.json`) and in each folder's `meta`.
+  - Download sizes are shown before anything downloads. Without a terminal, setup refuses unless `--accept-license --yes` is given (exit 4). EOF never counts as consent.
+  - `status` shows setup readiness and the device.
 - **Exit:** `ragalay setup` works from scratch on Windows (AMD) and the M3 Pro, and a Go test embeds through both runtimes.
+  - ✅ Windows + RX 9070 XT: setup completed (ROCm torch, self-test parity **0.9997**).
+  - ✅ Windows CPU-only (`--device cpu`, separate cache): setup completed. Indexing model loads in fp32 in 20.8 s, a text + image take 12.5 s, the search model loads and embeds in 0.58 s, parity **0.9998**.
+  - Found during that run: Hugging Face dropped the connection mid-download. The downloader now **retries network errors 5 times with backoff, resuming each time** (HTTP 4xx isn't retried), and the re-run resumed from the partial file.
+  - ✅ `TestBothRuntimesOnThisMachine`: text, image, captioned image, and PDF page through the GPU sidecar, plus a llama.cpp query. Attention text 0.853 vs bread 0.045, PDF page 0.568. 256-dim truncation keeps the ranking.
+  - ⏸ M3 Pro deferred (user, 2026-10-06).
+  - Untested variants: cuda, mps, rocm-gfx1200.
 
 ### Phase 3: Scan, records, pairing, lock
 - [ ] Walker over the configured folders, ignore globs, kind mapping

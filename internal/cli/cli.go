@@ -38,17 +38,19 @@ func (e *exitError) Unwrap() error { return e.err }
 
 type app struct {
 	rootFlag string
+	stdin    io.Reader
 	stdout   io.Writer
 	stderr   io.Writer
+	isTTY    func() bool // nil: check os.Stdin
 }
 
 // Execute runs the CLI with os.Args and returns the process exit code.
 func Execute() int {
-	return run(os.Args[1:], os.Stdout, os.Stderr)
+	return run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, nil)
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
-	a := &app{stdout: stdout, stderr: stderr}
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer, isTTY func() bool) int {
+	a := &app{stdin: stdin, stdout: stdout, stderr: stderr, isTTY: isTTY}
 	cmd := a.rootCmd()
 	cmd.SetArgs(args)
 	cmd.SetOut(stdout)
@@ -85,7 +87,7 @@ AI agents (via --json output or MCP) can search them. Nothing leaves your machin
 	}
 	cmd.PersistentFlags().StringVar(&a.rootFlag, "root", "",
 		"ragalay directory (default: search upward from the current folder, then from the binary; env RAGALAY_ROOT)")
-	cmd.AddCommand(a.initCmd(), a.foldersCmd(), a.statusCmd(), a.versionCmd())
+	cmd.AddCommand(a.initCmd(), a.foldersCmd(), a.setupCmd(), a.statusCmd(), a.versionCmd())
 	return cmd
 }
 
