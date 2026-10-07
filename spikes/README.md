@@ -1,6 +1,6 @@
 # Phase 0 spikes
 
-Throwaway experiments behind the decisions in `plans/plan1/plan.md` §3.1 and `plans/plan2/plan.md` §3. None of this code ships. Re-run them on new hardware (e.g. the M3 Pro) and record the numbers in the plan.
+Throwaway experiments behind the decisions in `plans/plan1/plan.md` §3.1 and `plans/archive/plan2/plan.md` §3.1. None of this code ships. Re-run them on new hardware (e.g. the M3 Pro) and record the numbers in the plan.
 
 | Dir | What it checks | Run |
 |---|---|---|
