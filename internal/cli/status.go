@@ -30,8 +30,12 @@ type StatusReport struct {
 	Pairs         int          `json:"pairs"`    // Markdown ↔ PDF links
 	Indexing      *lock.Info   `json:"indexing"` // the process holding the index lock, if any
 	// ModelMismatch is set when the settings ask for a different vector
-	// space than the index was built with (run `ragalay reembed`).
+	// space than the index was built with or is switching to (run
+	// `ragalay reembed`). Search keeps using the index's model meanwhile.
 	ModelMismatch *Mismatch `json:"model_mismatch"`
+	// ModelSwitch is a model switch in progress: search uses the previous
+	// model until it finishes (plan2 S1).
+	ModelSwitch *store.Shadow `json:"model_switch"`
 }
 
 // Mismatch names both vector spaces.
@@ -104,8 +108,11 @@ func statusReport(ctx context.Context, root string) (StatusReport, error) {
 	if info, alive := lock.Read(filepath.Join(root, config.DirName)); alive {
 		rep.Indexing = &info
 	}
-	if want := index.SpaceID(cfg); rep.Index.EmbedID != "" && rep.Index.EmbedID != want {
-		rep.ModelMismatch = &Mismatch{Index: rep.Index.EmbedID, Config: want}
+	if sp, err := index.ReadSpaces(ctx, root, cfg); err == nil {
+		rep.ModelSwitch = sp.Shadow
+		if sp.Mismatch() {
+			rep.ModelMismatch = &Mismatch{Index: sp.Live, Config: sp.Want}
+		}
 	}
 	if cache, err := setup.CacheDir(); err == nil {
 		st, _ := setup.LoadState(cache)
@@ -121,7 +128,14 @@ func (a *app) printStatus(r StatusReport) {
 	w := a.stdout
 	fmt.Fprintf(w, "ragalay %s in %s\n\n", r.Version, r.Root)
 	if m := r.ModelMismatch; m != nil {
-		fmt.Fprintf(w, "!! The settings changed the model (%s -> %s).\n!! Search is off until you run \"ragalay reembed\".\n\n", m.Index, m.Config)
+		fmt.Fprintf(w, "!! The settings changed the model (%s -> %s).\n!! Search keeps using the current model until you run \"ragalay reembed\".\n\n", m.Index, m.Config)
+	}
+	if s := r.ModelSwitch; s != nil {
+		fmt.Fprintf(w, "Switching models (%s -> %s): %d of %d documents done.\nSearch uses the current model until the switch finishes.", s.From, s.To, s.Done, s.Total)
+		if s.Changes > 0 {
+			fmt.Fprintf(w, " %d file changes reach search when it finishes.", s.Changes)
+		}
+		fmt.Fprint(w, "\n\n")
 	}
 	if len(r.ConfigErrors) > 0 {
 		fmt.Fprintln(w, "Problems in .ragalay/config.toml:")

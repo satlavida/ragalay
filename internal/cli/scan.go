@@ -124,7 +124,7 @@ func (a *app) indexAfterScan(ctx context.Context, root string, cfg config.Config
 	if err := indexpkg.CheckSpace(ctx, root, cfg); err != nil {
 		return nil, "", err
 	}
-	if rep.Queued == 0 {
+	if rep.Queued == 0 && !indexpkg.Switching(ctx, root) {
 		return nil, "", nil
 	}
 	sum, err := a.indexQueue(ctx, root, cfg, quiet)

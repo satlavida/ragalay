@@ -205,7 +205,7 @@ func TestResetForReembed(t *testing.T) {
 		var n int64
 		if err := Tx(ctx, db, func(tx *sql.Tx) error {
 			var err error
-			n, err = ResetForReembed(ctx, tx, "new", 256)
+			n, err = ResetForReembed(ctx, tx, "new", 256, `{"profile":"x"}`)
 			return err
 		}); err != nil {
 			return err

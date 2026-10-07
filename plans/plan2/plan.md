@@ -238,7 +238,7 @@ concurrency = 0               # 0 = 4 on this computer, 1 elsewhere (S16)
 - When nothing is left to embed, one transaction renames the shadow tables over the live ones, sets `meta.embed_id`, clears `query_cache`, and drops the old tables.
 - A new switch while building (S3) drops the shadow and starts again. Choosing the live model just drops the shadow.
 - A fresh or empty index needs no shadow: the build goes straight to live.
-- Search reads only the live tables, with the live profile's querier.
+- Search reads only the live tables, with the live profile's querier: the settings recorded in `meta.embed_config`, or inferred from a local profile's `embed_id` for Plan 1 indexes. Long-lived searchers (TUI, MCP) reload the query model when the live space changes.
 
 ### 5.7 Tokenizer
 Local profiles count tokens with their GGUF tokenizer. The HTTP profile uses `chunk.Estimate` with a margin under `max_input_tokens`.
@@ -293,12 +293,16 @@ ragalay model test [--json]                     # probe the active runtime / end
 - Exit check: a Gemma folder indexed MD + PDF + linked image (71 chunks, 26 s), and searches found the right page, note, and image with llama.cpp only
 - Exit: a Gemma folder indexes MD, PDF, and images. Search parity is at or above the Phase 0 threshold, and search uses no Python
 
-### Phase 3: Shadow build
-- [ ] Shadow tables plus `meta.next_embed_id`. The indexer writes to the shadow while a build runs
-- [ ] Atomic swap at the end. Cancel or restart on a new switch (S3). A fresh index builds straight to live
-- [ ] Disk check (S4). `status` shows build progress and pending changes (S2)
-- [ ] Tests: search stays complete during a build, the swap is atomic, interrupted builds resume, a re-switch discards
-- Exit: switching models on a populated folder never shows partial results
+### Phase 3: Shadow build ✅ Completed (2026-10-07)
+- [x] Shadow tables (`chunks_next`, `terms_next`, `postings_next`) plus `meta.next_embed_id` / `next_embed_dim` / `next_embed_config`. `store.WriteTarget` sends every chunk write (including linked-image cleanup) to the shadow while a switch runs, and deletes leave both indexes. Schema v3 adds `shadow_dirty`
+- [x] Atomic swap at the end of an indexing run (`FinishShadow`: drop live, rename shadow, recreate indexes, clear the query cache). A new choice restarts the switch, and choosing the live model cancels it, requeueing only documents that changed during the switch (S3). An index with no chunks rebuilds in place
+- [x] Disk check (S4): index size scaled by the new dim, refuse under 1.5× free, `--force` overrides. `status` (text and `--json` `model_switch`) and the TUI show progress and pending changes (S2)
+- [x] Tests: store lifecycle (start/write/delete/finish/cancel/restart), runner switch with an interruption (live chunks untouched at the old dim), resume and swap, re-switch and cancel, low-disk refusal, in-place rebuild of an empty index
+- Exit check (real models, Windows): Gemma → Jina → Gemma on a folder with MD + PDF + image. Search answered throughout both switches, with vector search on the previous model during the second, and the swap happened when indexing finished
+- Also found and fixed:
+  - Schema migrations only ran at `init`. They now run when any command opens a folder (`cli.upgradeIndex`), so Plan 1 folders get v3.
+  - Plan 1 indexes don't record their settings. `index.LiveEmbed` infers a local profile from its `embed_id`, so search keeps its vectors during a switch, and setup now records `embed_config`.
+- **Behavior change (plan1 §4.7):** `search` no longer exits 2 on a model mismatch. It keeps using the live index's model and adds a notice (and `--mode vector` with an unknown live model fails with `ErrOtherSpace`). `scan` and `reembed` still exit 2 on a mismatch.
 
 ### Phase 4: OpenAI-compatible client
 - [ ] `internal/embed/openai`: batching, retries, base64/float, normalize, `dimensions`, `matryoshka`, `extra_body`, timeouts

@@ -10,13 +10,21 @@ import (
 
 // SchemaVersion is the schema this binary writes. Migrations upgrade older
 // databases step by step; a newer database is refused.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // migrations[i] upgrades from version i to i+1. The chunks table depends on
 // the embedding dimension, so steps get it as a parameter.
 var migrations = []func(ctx context.Context, tx *sql.Tx, dim int) error{
 	migrateV1,
 	migrateV2,
+	migrateV3,
+}
+
+// migrateV3 (plan2 Phase 3): documents changed during a model switch, so
+// cancelling the switch can redo them in the live index.
+func migrateV3(ctx context.Context, tx *sql.Tx, dim int) error {
+	_, err := tx.ExecContext(ctx, `CREATE TABLE shadow_dirty (document_id INTEGER PRIMARY KEY)`)
+	return err
 }
 
 // migrateV2 (plan1 Phase 5): chunks remember the file a linked image came
@@ -118,10 +126,10 @@ func chunksV1DDL(dim int) string {
 		embedding F32_BLOB(%d))`, dim)
 }
 
-// chunksDDL is the chunks table at SchemaVersion; re-embedding recreates it
-// with a new dimension.
-func chunksDDL(dim int) string {
-	return fmt.Sprintf(`CREATE TABLE chunks (
+// chunksTableDDL is the chunks table at SchemaVersion; re-embedding and model
+// switches create it (or its shadow) with a new dimension.
+func chunksTableDDL(name string, dim int) string {
+	return fmt.Sprintf(`CREATE TABLE %s (
 		id INTEGER PRIMARY KEY,
 		document_id INTEGER NOT NULL,
 		ord INTEGER NOT NULL,
@@ -132,7 +140,7 @@ func chunksDDL(dim int) string {
 		token_count INTEGER NOT NULL DEFAULT 0,
 		embedding F32_BLOB(%d),
 		source_path TEXT,
-		bm25_len INTEGER NOT NULL DEFAULT 0)`, dim)
+		bm25_len INTEGER NOT NULL DEFAULT 0)`, name, dim)
 }
 
 // Version returns the database's schema version, 0 for an empty database.

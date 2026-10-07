@@ -3,6 +3,7 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -102,7 +103,33 @@ AI agents (via --json output or MCP) can search them. Nothing leaves your machin
 	return cmd
 }
 
-func (a *app) root() (string, error) { return config.ResolveRoot(a.rootFlag) }
+// root finds the ragalay folder and brings its index to the current schema,
+// so folders made by an older ragalay keep working after an update.
+func (a *app) root() (string, error) {
+	root, err := config.ResolveRoot(a.rootFlag)
+	if err != nil {
+		return root, err
+	}
+	return root, upgradeIndex(root)
+}
+
+func upgradeIndex(root string) error {
+	path := dbPath(root)
+	if _, err := os.Stat(path); err != nil {
+		return nil // not created yet: init does it
+	}
+	ctx := context.Background()
+	return store.With(ctx, path, func(db *sql.DB) error {
+		if v, err := store.Version(ctx, db); err != nil || v == store.SchemaVersion {
+			return err
+		}
+		cfg, err := config.Load(root)
+		if err != nil {
+			cfg = config.Default()
+		}
+		return store.Migrate(ctx, db, cfg.Embed.Dim)
+	})
+}
 
 func (a *app) printJSON(v any) error {
 	enc := json.NewEncoder(a.stdout)

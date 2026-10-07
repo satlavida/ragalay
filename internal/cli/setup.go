@@ -17,6 +17,7 @@ import (
 
 	"github.com/satlavida/ragalay/internal/config"
 	"github.com/satlavida/ragalay/internal/embed"
+	"github.com/satlavida/ragalay/internal/index"
 	"github.com/satlavida/ragalay/internal/setup"
 	"github.com/satlavida/ragalay/internal/store"
 )
@@ -175,7 +176,7 @@ func recordSetup(ctx context.Context, root string, cfg config.Config, st setup.S
 				return err
 			}
 			if cur == "" {
-				if err := store.SetMeta(ctx, tx, "embed_id", cfg.Embed.SpaceID()); err != nil {
+				if err := store.SetLiveSpace(ctx, tx, cfg.Embed.SpaceID(), cfg.Embed.Dim, index.EmbedJSON(cfg.Embed)); err != nil {
 					return err
 				}
 			}

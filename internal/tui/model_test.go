@@ -233,7 +233,7 @@ func TestMismatchRebuild(t *testing.T) {
 	f := &fakeBackend{first: FirstRun{Dir: "/x"}, mismatch: "model@a:1024 -> model@a:512"}
 	var m tea.Model = New(f)
 	m = drive(m, tea.WindowSizeMsg{Width: 90, Height: 30}, m.Init()())
-	if !strings.Contains(view(m), "Press R to rebuild") {
+	if !strings.Contains(view(m), "Press R to switch") {
 		t.Fatalf("mismatch banner missing:\n%s", view(m))
 	}
 	m = drive(m, key("esc")) // leave the search box so R is a command

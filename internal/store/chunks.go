@@ -35,22 +35,23 @@ func EmbedDim(ctx context.Context, q interface {
 }
 
 // ReplaceChunks swaps a document's chunks, vectors and BM25 postings for new
-// ones, keeping term document frequencies right. Vectors must have the
-// index dimension (Turso does not check F32_BLOB sizes).
+// ones in the write target (the shadow tables during a model switch),
+// keeping term document frequencies right. Vectors must have the target's
+// dimension (Turso does not check F32_BLOB sizes).
 func ReplaceChunks(ctx context.Context, tx *sql.Tx, docID int64, rows []ChunkRow) error {
-	dim, err := EmbedDim(ctx, tx)
+	t, err := WriteTarget(ctx, tx)
 	if err != nil {
 		return err
 	}
 	for i, r := range rows {
-		if len(r.Vector) != dim {
-			return fmt.Errorf("chunk %d has a %d-dimension vector, the index uses %d", i, len(r.Vector), dim)
+		if len(r.Vector) != t.Dim {
+			return fmt.Errorf("chunk %d has a %d-dimension vector, the index uses %d", i, len(r.Vector), t.Dim)
 		}
 	}
-	if err := deleteChunks(ctx, tx, docID); err != nil {
+	if err := deleteChunks(ctx, tx, t.Tables, docID); err != nil {
 		return err
 	}
-	ins, err := tx.PrepareContext(ctx, `INSERT INTO chunks
+	ins, err := tx.PrepareContext(ctx, `INSERT INTO `+t.Chunks+`
 		(document_id, ord, modality, text, heading_path, page, token_count, embedding, source_path, bm25_len)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
@@ -81,15 +82,15 @@ func ReplaceChunks(ctx context.Context, tx *sql.Tx, docID int64, rows []ChunkRow
 			return err
 		}
 		for term, count := range tf {
-			id, err := termID(ctx, tx, termIDs, term)
+			id, err := termID(ctx, tx, t.Terms, termIDs, term)
 			if err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO postings (term_id, chunk_id, tf) VALUES (?, ?, ?)`,
+			if _, err := tx.ExecContext(ctx, `INSERT INTO `+t.Postings+` (term_id, chunk_id, tf) VALUES (?, ?, ?)`,
 				id, chunkID, count); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE terms SET df = df + 1 WHERE id = ?`, id); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE `+t.Terms+` SET df = df + 1 WHERE id = ?`, id); err != nil {
 				return err
 			}
 		}
@@ -97,14 +98,14 @@ func ReplaceChunks(ctx context.Context, tx *sql.Tx, docID int64, rows []ChunkRow
 	return nil
 }
 
-func termID(ctx context.Context, tx *sql.Tx, cache map[string]int64, term string) (int64, error) {
+func termID(ctx context.Context, tx *sql.Tx, terms string, cache map[string]int64, term string) (int64, error) {
 	if id, ok := cache[term]; ok {
 		return id, nil
 	}
 	var id int64
-	err := tx.QueryRowContext(ctx, `SELECT id FROM terms WHERE term = ?`, term).Scan(&id)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM `+terms+` WHERE term = ?`, term).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		res, err := tx.ExecContext(ctx, `INSERT INTO terms (term, df) VALUES (?, 0)`, term)
+		res, err := tx.ExecContext(ctx, `INSERT INTO `+terms+` (term, df) VALUES (?, 0)`, term)
 		if err != nil {
 			return 0, err
 		}
@@ -119,14 +120,14 @@ func termID(ctx context.Context, tx *sql.Tx, cache map[string]int64, term string
 	return id, nil
 }
 
-func deleteChunks(ctx context.Context, tx *sql.Tx, docID int64) error {
+func deleteChunks(ctx context.Context, tx *sql.Tx, t Tables, docID int64) error {
 	for _, s := range []string{
-		`UPDATE terms SET df = df - (
-			SELECT count(*) FROM postings p JOIN chunks c ON c.id = p.chunk_id
-			WHERE p.term_id = terms.id AND c.document_id = ?1)
-		WHERE id IN (SELECT p.term_id FROM postings p JOIN chunks c ON c.id = p.chunk_id WHERE c.document_id = ?1)`,
-		`DELETE FROM postings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?1)`,
-		`DELETE FROM chunks WHERE document_id = ?1`,
+		`UPDATE ` + t.Terms + ` SET df = df - (
+			SELECT count(*) FROM ` + t.Postings + ` p JOIN ` + t.Chunks + ` c ON c.id = p.chunk_id
+			WHERE p.term_id = ` + t.Terms + `.id AND c.document_id = ?1)
+		WHERE id IN (SELECT p.term_id FROM ` + t.Postings + ` p JOIN ` + t.Chunks + ` c ON c.id = p.chunk_id WHERE c.document_id = ?1)`,
+		`DELETE FROM ` + t.Postings + ` WHERE chunk_id IN (SELECT id FROM ` + t.Chunks + ` WHERE document_id = ?1)`,
+		`DELETE FROM ` + t.Chunks + ` WHERE document_id = ?1`,
 	} {
 		if _, err := tx.ExecContext(ctx, s, docID); err != nil {
 			return err
@@ -278,16 +279,19 @@ func ReplaceLinks(ctx context.Context, tx *sql.Tx, parentID int64, links []Link)
 		}
 	}
 	// Images now indexed with this document: drop their standalone chunks.
+	t, err := WriteTarget(ctx, tx)
+	if err != nil {
+		return err
+	}
 	for _, l := range links {
 		var id int64
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM documents WHERE path = ?`, l.ChildPath).Scan(&id); err != nil {
 			continue
 		}
-		if err := deleteChunks(ctx, tx, id); err != nil {
+		if err := deleteChunks(ctx, tx, t.Tables, id); err != nil {
 			return err
 		}
-		embedID, _ := Meta(ctx, tx, "embed_id")
-		if err := MarkDone(ctx, tx, id, 0, embedID, LinkedNote); err != nil {
+		if err := MarkDone(ctx, tx, id, 0, t.EmbedID, LinkedNote); err != nil {
 			return err
 		}
 	}
@@ -306,38 +310,29 @@ func IsLinked(ctx context.Context, q interface {
 	return n > 0, err
 }
 
-// ResetForReembed empties the index for a new vector space: chunks are
-// recreated at dim, BM25 data and the query cache are cleared, and every
-// document is queued again. It is safe to interrupt: the new embed_id is
-// recorded first, so the next run simply continues the queue.
-func ResetForReembed(ctx context.Context, tx *sql.Tx, embedID string, dim int) (int64, error) {
-	for _, s := range []string{
-		`DROP TABLE IF EXISTS chunks`,
-		chunksDDL(dim),
-		`CREATE INDEX chunks_document ON chunks (document_id)`,
-		`DELETE FROM postings`,
-		`DELETE FROM terms`,
-		`DELETE FROM query_cache`,
-	} {
-		if _, err := tx.ExecContext(ctx, s); err != nil {
-			return 0, fmt.Errorf("%w\n%s", err, s)
-		}
-	}
-	if err := SetMeta(ctx, tx, "embed_id", embedID); err != nil {
+// ResetForReembed empties the index for a new vector space in place: the
+// live tables are recreated at dim, the query cache is cleared, and every
+// document is queued again. Used when the live index has nothing worth
+// keeping searchable; otherwise a switch goes through StartShadow. It is
+// safe to interrupt: the new embed_id is recorded first, so the next run
+// simply continues the queue.
+func ResetForReembed(ctx context.Context, tx *sql.Tx, embedID string, dim int, embedConfig string) (int64, error) {
+	if err := dropTables(ctx, tx, NextTables); err != nil {
 		return 0, err
 	}
-	if err := SetMeta(ctx, tx, "embed_dim", strconv.Itoa(dim)); err != nil {
+	if err := dropTables(ctx, tx, LiveTables); err != nil {
 		return 0, err
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE documents SET status = ?, chunk_count = 0, embed_id = NULL, error = NULL`,
-		StatusPending)
-	if err != nil {
+	if err := execAll(ctx, tx, append(tableDDL(LiveTables, dim),
+		`DELETE FROM query_cache`, `DELETE FROM shadow_dirty`,
+		`DELETE FROM meta WHERE key IN ('next_embed_id', 'next_embed_dim', 'next_embed_config')`)); err != nil {
 		return 0, err
 	}
-	n, _ := res.RowsAffected()
-	now := time.Now().Unix()
-	_, err = tx.ExecContext(ctx, `INSERT INTO jobs (document_id, state, attempts, enqueued_at)
-		SELECT id, 'queued', 0, ? FROM documents WHERE true
-		ON CONFLICT (document_id) DO UPDATE SET state = 'queued', attempts = 0, last_error = NULL`, now)
-	return n, err
+	if err := SetLiveSpace(ctx, tx, embedID, dim, embedConfig); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE documents SET chunk_count = 0, embed_id = NULL`); err != nil {
+		return 0, err
+	}
+	return queueAll(ctx, tx)
 }

@@ -79,6 +79,7 @@ type Status struct {
 	FailedDocs []FailedDoc
 	OtherIndex string // another process is indexing (its command), or ""
 	Mismatch   string // model change that needs a re-embed, or ""
+	Switch     string // model switch in progress ("12 of 40 documents done"), or ""
 	SetupReady bool
 	Device     string
 	Folders    []Folder

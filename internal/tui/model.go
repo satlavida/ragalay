@@ -772,7 +772,10 @@ func (m Model) viewMain() string {
 	}
 	b.WriteString(title.Render("ragalay") + "  " + strings.Join(tabs, " ") + "   " + m.activityLine() + "\n")
 	if m.status.Mismatch != "" {
-		b.WriteString(warn.Render("The model settings changed. Press R to rebuild the index (search is off until then).") + "\n")
+		b.WriteString(warn.Render("The model settings changed. Press R to switch (search keeps using the current model meanwhile).") + "\n")
+	}
+	if m.status.Switch != "" {
+		b.WriteString(dim.Render("Switching models: "+m.status.Switch+". Search uses the previous model until it finishes.") + "\n")
 	}
 	if !m.status.SetupReady && m.screen == scrMain {
 		b.WriteString(warn.Render("The AI models are not set up. Run ragalay setup.") + "\n")

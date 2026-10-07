@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -12,18 +13,72 @@ import (
 	"github.com/satlavida/ragalay/internal/search"
 )
 
-// newSearcher builds a Searcher for root. The profile's query model is
-// loaded when available; without it search falls back to keywords. The
+// liveSearcher searches root with the model that built the live index,
+// which differs from the settings while a model switch runs or before
+// `ragalay reembed` (plan2 S1). It follows the index: when a switch
+// finishes, the next search loads the new query model. The query model
+// loads when available; without it search falls back to keywords. The
 // Python sidecar is never involved.
-func newSearcher(root string, cfg config.Config) (*search.Searcher, func(), error) {
-	s := &search.Searcher{Root: root, Cfg: cfg}
-	q, id, err := newQuerier(cfg.Embed)
-	s.QueryModel = id
+type liveSearcher struct {
+	root string
+	mu   sync.Mutex
+	s    *search.Searcher
+	key  string // space the loaded query model serves
+	done func()
+}
+
+func newLiveSearcher(root string) *liveSearcher { return &liveSearcher{root: root, done: func() {}} }
+
+// Search runs a search with the current settings cfg.
+func (l *liveSearcher) Search(ctx context.Context, cfg config.Config, q string, o search.Options) (search.Response, error) {
+	emb, known, err := index.LiveEmbed(ctx, l.root, cfg)
 	if err != nil {
-		return s, func() {}, nil // keyword fallback; Search reports it
+		return search.Response{}, err
 	}
-	s.Querier = q
-	return s, func() { q.Close() }, nil
+	sp, err := index.ReadSpaces(ctx, l.root, cfg)
+	if err != nil {
+		return search.Response{}, err
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if key := fmt.Sprint(emb.SpaceID(), known); l.s == nil || key != l.key {
+		l.done()
+		l.s, l.done, l.key = &search.Searcher{Root: l.root}, func() {}, key
+		if known {
+			qr, id, err := newQuerier(emb)
+			l.s.QueryModel = id
+			if err == nil { // otherwise keyword fallback; Search reports it
+				l.s.Querier, l.done = qr, func() { qr.Close() }
+			}
+		}
+	}
+	l.s.Cfg = cfg
+	l.s.Cfg.Embed = emb
+	l.s.Notice = switchNotice(sp, known)
+	return l.s.Search(ctx, q, o)
+}
+
+// Close unloads the query model.
+func (l *liveSearcher) Close() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.done()
+	l.s, l.done = nil, func() {}
+}
+
+// switchNotice explains results that come from another model than the
+// settings name.
+func switchNotice(sp index.Spaces, known bool) string {
+	switch {
+	case sp.Shadow != nil:
+		return fmt.Sprintf("switching models (%d of %d documents done): results use the previous model until it finishes",
+			sp.Shadow.Done, sp.Shadow.Total)
+	case sp.Mismatch() && known:
+		return `the settings name a different model: results use the previous one until you run "ragalay reembed"`
+	case sp.Mismatch():
+		return `the settings name a different model: keyword search only until you run "ragalay reembed"`
+	}
+	return ""
 }
 
 func (a *app) searchCmd() *cobra.Command {
@@ -60,16 +115,10 @@ heading_path, text, paired_path, parent_path}.`,
 			default:
 				return fmt.Errorf("--group-by must be chunk or doc")
 			}
-			s, closeFn, err := newSearcher(root, cfg)
+			s := newLiveSearcher(root)
+			defer s.Close()
+			resp, err := s.Search(cmd.Context(), cfg, strings.Join(args, " "), o)
 			if err != nil {
-				return err
-			}
-			defer closeFn()
-			resp, err := s.Search(cmd.Context(), strings.Join(args, " "), o)
-			if err != nil {
-				if index.IsMismatch(err) {
-					return &exitError{ExitModelMismatch, err}
-				}
 				return err
 			}
 			if resp.Notice != "" {

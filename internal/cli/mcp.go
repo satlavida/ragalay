@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
@@ -26,25 +25,17 @@ over the Model Context Protocol on stdin/stdout. Add it to Claude Code with:
 			if err != nil {
 				return err
 			}
-			// The query model loads on the first search and stays loaded.
-			var (
-				once     sync.Once
-				searcher *search.Searcher
-				closeFn  = func() {}
-			)
-			defer func() { closeFn() }()
-			getSearcher := func(cfg config.Config) *search.Searcher {
-				once.Do(func() { searcher, closeFn, _ = newSearcher(root, cfg) })
-				searcher.Cfg = cfg // pick up config edits
-				return searcher
-			}
+			// The query model loads on the first search and stays loaded
+			// until a model switch finishes.
+			searcher := newLiveSearcher(root)
+			defer searcher.Close()
 			b := mcpserver.Backend{
 				Search: func(ctx context.Context, q string, o search.Options) (search.Response, error) {
-					cfg, err := config.Load(root)
+					cfg, err := config.Load(root) // pick up config edits
 					if err != nil {
 						return search.Response{}, err
 					}
-					return getSearcher(cfg).Search(ctx, q, o)
+					return searcher.Search(ctx, cfg, q, o)
 				},
 				Status: func(ctx context.Context) (any, error) { return statusReport(ctx, root) },
 				ListDocuments: func(ctx context.Context, status, kind string) (any, error) {

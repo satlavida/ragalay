@@ -120,15 +120,21 @@ func SetPair(ctx context.Context, tx *sql.Tx, id, pairID int64) error {
 }
 
 // DeleteDocument removes a document with its chunks, BM25 postings, links
-// and job, keeping term document frequencies correct.
+// and job, keeping term document frequencies correct. During a model switch
+// it leaves both the live and the shadow index.
 func DeleteDocument(ctx context.Context, tx *sql.Tx, id int64) error {
+	if err := deleteChunks(ctx, tx, LiveTables, id); err != nil {
+		return err
+	}
+	if t, err := WriteTarget(ctx, tx); err != nil {
+		return err
+	} else if t.Building {
+		if err := deleteChunks(ctx, tx, t.Tables, id); err != nil {
+			return err
+		}
+	}
 	stmts := []string{
-		`UPDATE terms SET df = df - (
-			SELECT count(*) FROM postings p JOIN chunks c ON c.id = p.chunk_id
-			WHERE p.term_id = terms.id AND c.document_id = ?1)
-		WHERE id IN (SELECT p.term_id FROM postings p JOIN chunks c ON c.id = p.chunk_id WHERE c.document_id = ?1)`,
-		`DELETE FROM postings WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id = ?1)`,
-		`DELETE FROM chunks WHERE document_id = ?1`,
+		`DELETE FROM shadow_dirty WHERE document_id = ?1`,
 		// Images this document linked are indexed on their own again.
 		`UPDATE documents SET status = 'pending' WHERE path IN (SELECT child_path FROM doc_links WHERE parent_id = ?1)`,
 		`INSERT INTO jobs (document_id, state, attempts, enqueued_at)
@@ -157,11 +163,18 @@ func DeleteDocument(ctx context.Context, tx *sql.Tx, id int64) error {
 	return nil
 }
 
-// Enqueue (re)queues a document for indexing.
+// Enqueue (re)queues a document for indexing. During a model switch the
+// change goes to the shadow index only and is remembered, so cancelling the
+// switch can redo it in the live index (S2, S3).
 func Enqueue(ctx context.Context, tx *sql.Tx, id int64) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO jobs (document_id, state, attempts, enqueued_at) VALUES (?, 'queued', 0, ?)
 		ON CONFLICT (document_id) DO UPDATE SET state = 'queued', attempts = 0, last_error = NULL,
 		enqueued_at = excluded.enqueued_at`, id, time.Now().Unix())
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO shadow_dirty (document_id)
+		SELECT ? WHERE EXISTS (SELECT 1 FROM meta WHERE key = 'next_embed_id')`, id)
 	return err
 }
 

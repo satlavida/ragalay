@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"image"
@@ -253,12 +254,18 @@ func TestKeywordFallbackWithoutQueryModel(t *testing.T) {
 	}
 }
 
-func TestSearchRefusesOnModelMismatch(t *testing.T) {
+// Settings for a model the index was not built with must not mix vector
+// spaces: hybrid search falls back to keywords, vector search refuses.
+func TestSearchWithOtherModelFallsBackToKeywords(t *testing.T) {
 	root, cfg := indexedRoot(t)
 	cfg.Embed.Dim = 256
 	s := &Searcher{Root: root, Cfg: cfg, Querier: &bowQuerier{}}
-	if _, err := s.Search(context.Background(), "anything", Options{}); !index.IsMismatch(err) {
-		t.Fatalf("want model mismatch, got %v", err)
+	resp, err := s.Search(context.Background(), "attention", Options{})
+	if err != nil || resp.Mode != Keyword || !strings.Contains(resp.Notice, "reembed") || len(resp.Results) == 0 {
+		t.Fatalf("want keyword fallback, got %+v %v", resp, err)
+	}
+	if _, err := s.Search(context.Background(), "attention", Options{Mode: Vector}); !errors.Is(err, ErrOtherSpace) {
+		t.Fatalf("vector mode: %v", err)
 	}
 	if _, err := s.Search(context.Background(), "  ", Options{}); err != ErrEmptyQuery {
 		t.Fatalf("empty query: %v", err)

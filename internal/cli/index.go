@@ -160,20 +160,19 @@ func (a *app) reembedCmd() *cobra.Command {
 			if !asJSON && rep.Changes() {
 				a.printScan(rep, false)
 			}
-			queued := int64(0)
-			if err := index.CheckSpace(ctx, root, cfg); index.IsMismatch(err) || force {
-				if queued, err = index.Reembed(ctx, root, cfg); err != nil {
-					return err
-				}
-				if !asJSON {
-					fmt.Fprintf(a.stdout, "Rebuilding the index for %s: %d documents queued.\n", index.SpaceID(cfg), queued)
-				}
-			} else if err != nil {
+			rb, err := index.StartRebuild(ctx, root, cfg, force)
+			if err != nil {
 				return err
 			}
+			if !asJSON {
+				a.printRebuild(rb)
+			}
 			sum, err := a.indexQueue(ctx, root, cfg, asJSON)
+			if !asJSON && sum != nil && sum.Switched {
+				fmt.Fprintln(a.stdout, "Model switch finished: search now uses the new model.")
+			}
 			if asJSON {
-				out := map[string]any{"queued": queued, "index": sum}
+				out := map[string]any{"rebuild": rb, "queued": rb.Queued, "index": sum}
 				if err != nil {
 					out["error"] = err.Error()
 				}
@@ -188,9 +187,25 @@ func (a *app) reembedCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "rebuild even if the settings did not change")
+	cmd.Flags().BoolVar(&force, "force", false, "rebuild even if the settings did not change, and skip the free-space check")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")
 	return cmd
+}
+
+func (a *app) printRebuild(rb index.Rebuild) {
+	w := a.stdout
+	switch rb.Mode {
+	case "switch":
+		fmt.Fprintf(w, "Switching models: %d documents queued. Search keeps using the current model until the switch finishes.\n", rb.Queued)
+	case "in_place":
+		fmt.Fprintf(w, "Rebuilding the index for %s: %d documents queued.\n", rb.To, rb.Queued)
+	case "continue":
+		fmt.Fprintln(w, "Continuing the model switch.")
+	case "cancelled":
+		fmt.Fprintf(w, "The settings name the current model again: model switch cancelled (%d changed documents to update).\n", rb.Queued)
+	default:
+		fmt.Fprintln(w, "The index already uses these settings (use --force to rebuild anyway).")
+	}
 }
 
 func lockErr(err error) error {

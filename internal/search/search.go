@@ -19,7 +19,6 @@ import (
 	"github.com/satlavida/ragalay/internal/bm25"
 	"github.com/satlavida/ragalay/internal/config"
 	"github.com/satlavida/ragalay/internal/embed"
-	"github.com/satlavida/ragalay/internal/index"
 	"github.com/satlavida/ragalay/internal/store"
 )
 
@@ -79,6 +78,8 @@ type Searcher struct {
 	Querier embed.Querier
 	// QueryModel names the query model for the cache key.
 	QueryModel string
+	// Notice is added to every response (e.g. a model switch in progress).
+	Notice string
 }
 
 // ErrEmptyQuery is returned for a blank query.
@@ -103,10 +104,8 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) (Respons
 	if o.Mode != Hybrid && o.Mode != Vector && o.Mode != Keyword {
 		return resp, fmt.Errorf("unknown mode %q (use hybrid, vector or keyword)", o.Mode)
 	}
-	if err := index.CheckSpace(ctx, s.Root, s.Cfg); err != nil {
-		return resp, err
-	}
 	dbPath := filepath.Join(s.Root, config.DirName, config.DBFile)
+	resp.Notice = s.Notice
 
 	var qvec []float32
 	if o.Mode != Keyword {
@@ -117,7 +116,7 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) (Respons
 		case o.Mode == Vector:
 			return resp, err
 		default:
-			resp.Notice = "keyword search only: " + err.Error()
+			resp.Notice = joinNotice(resp.Notice, "keyword search only: "+err.Error())
 			o.Mode = Keyword
 		}
 	}
@@ -164,9 +163,31 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) (Respons
 }
 
 // cacheSpace keys the query cache: vector space + query model.
-func (s *Searcher) cacheSpace() string { return index.SpaceID(s.Cfg) + "|" + s.QueryModel }
+func (s *Searcher) cacheSpace() string { return s.cacheSpaceID() + "|" + s.QueryModel }
+
+func (s *Searcher) cacheSpaceID() string { return s.Cfg.Embed.SpaceID() }
+
+func joinNotice(a, b string) string {
+	if a == "" {
+		return b
+	}
+	return a + "; " + b
+}
+
+// ErrOtherSpace means the query model does not match the live index (the
+// settings name a model the index was not built with).
+var ErrOtherSpace = errors.New(`the index was built with a different model than these settings; run "ragalay reembed"`)
 
 func (s *Searcher) queryVector(ctx context.Context, dbPath, query string) ([]float32, error) {
+	// Vectors from another space are meaningless against the live index.
+	var live string
+	store.With(ctx, dbPath, func(db *sql.DB) error {
+		live, _ = store.Meta(ctx, db, store.MetaEmbedID)
+		return nil
+	})
+	if live != "" && live != s.cacheSpaceID() {
+		return nil, ErrOtherSpace
+	}
 	norm := store.NormalizeQuery(query)
 	var cached []float32
 	var hit bool

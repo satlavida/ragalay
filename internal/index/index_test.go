@@ -261,32 +261,3 @@ func TestInterruptedRunResumes(t *testing.T) {
 		t.Fatalf("resumed run: %+v %v", sum, err)
 	}
 }
-
-func TestDimChangeNeedsReembed(t *testing.T) {
-	root, cfg := mixedRoot(t)
-	runner(root, cfg, &fakeEmbedder{}).Run(context.Background())
-
-	cfg.Embed.Dim = 512
-	_, err := runner(root, cfg, &fakeEmbedder{}).Run(context.Background())
-	var mm *ErrModelMismatch
-	if !errors.As(err, &mm) || !strings.Contains(mm.Config, ":512") || mm.Documents != 8 {
-		t.Fatalf("want model mismatch, got %v", err)
-	}
-	n, err := Reembed(context.Background(), root, cfg)
-	if err != nil || n != 8 {
-		t.Fatalf("reembed: %d %v", n, err)
-	}
-	sum, err := runner(root, cfg, &fakeEmbedder{}).Run(context.Background())
-	if err != nil || sum.Indexed != 6 {
-		t.Fatalf("rebuild: %+v %v", sum, err)
-	}
-	ctx := context.Background()
-	store.With(ctx, dbPath(root), func(db *sql.DB) error {
-		var blob []byte
-		db.QueryRowContext(ctx, `SELECT embedding FROM chunks LIMIT 1`).Scan(&blob)
-		if len(blob) != 512*4 {
-			t.Errorf("vectors are %d bytes, want 512 dims", len(blob))
-		}
-		return nil
-	})
-}

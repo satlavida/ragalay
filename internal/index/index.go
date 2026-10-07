@@ -37,11 +37,16 @@ func (e *ErrModelMismatch) Error() string {
 func SpaceID(cfg config.Config) string { return cfg.Embed.SpaceID() }
 
 // CheckSpace compares the index with the config. A fresh index (no embed_id
-// yet) adopts the config's space.
+// yet) adopts the config's space. Settings that name the space a model
+// switch is building are fine: indexing continues the switch.
 func CheckSpace(ctx context.Context, root string, cfg config.Config) error {
 	want := SpaceID(cfg)
 	return store.With(ctx, dbPath(root), func(db *sql.DB) error {
-		have, err := store.Meta(ctx, db, "embed_id")
+		have, err := store.Meta(ctx, db, store.MetaEmbedID)
+		if err != nil {
+			return err
+		}
+		next, err := store.Meta(ctx, db, store.MetaNextEmbedID)
 		if err != nil {
 			return err
 		}
@@ -50,9 +55,11 @@ func CheckSpace(ctx context.Context, root string, cfg config.Config) error {
 			return err
 		}
 		if have == "" && dim == cfg.Embed.Dim {
-			return store.Tx(ctx, db, func(tx *sql.Tx) error { return store.SetMeta(ctx, tx, "embed_id", want) })
+			return store.Tx(ctx, db, func(tx *sql.Tx) error {
+				return store.SetLiveSpace(ctx, tx, want, dim, EmbedJSON(cfg.Embed))
+			})
 		}
-		if have != want {
+		if have != want && next != want {
 			var n int
 			db.QueryRowContext(ctx, `SELECT count(*) FROM documents`).Scan(&n)
 			return &ErrModelMismatch{Index: have, Config: want, Documents: n}
@@ -97,6 +104,7 @@ type Summary struct {
 	Linked   int           `json:"linked"` // images indexed as part of a Markdown file
 	Chunks   int           `json:"chunks"`
 	Requeued int64         `json:"requeued"`
+	Switched bool          `json:"switched,omitempty"` // a model switch finished and search now uses it
 	Duration time.Duration `json:"duration_ns"`
 	Device   string        `json:"device,omitempty"`
 	Errors   []DocError    `json:"errors"`
@@ -110,16 +118,24 @@ type DocError struct {
 
 // Run indexes queued documents until the queue is empty or ctx ends. An
 // interrupted document goes back to the queue.
-func (r *Runner) Run(ctx context.Context) (Summary, error) {
+func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 	start := time.Now()
-	sum := Summary{Errors: []DocError{}}
+	sum = Summary{Errors: []DocError{}}
+	if _, _, err := Reconcile(ctx, r.Root, r.Cfg); err != nil {
+		return sum, err
+	}
 	if err := CheckSpace(ctx, r.Root, r.Cfg); err != nil {
 		return sum, err
 	}
 	space := SpaceID(r.Cfg)
+	defer func() {
+		if ctx.Err() == nil {
+			sum.Switched = r.finishSwitch()
+		}
+	}()
 
 	var jobs []store.Job
-	err := store.With(ctx, dbPath(r.Root), func(db *sql.DB) error {
+	err = store.With(ctx, dbPath(r.Root), func(db *sql.DB) error {
 		err := store.Tx(ctx, db, func(tx *sql.Tx) error {
 			if _, err := store.RecoverInterrupted(ctx, tx); err != nil {
 				return err
@@ -238,6 +254,33 @@ func (r *Runner) Run(ctx context.Context) (Summary, error) {
 		return sum, ctx.Err()
 	}
 	return sum, nil
+}
+
+// finishSwitch swaps a finished model switch in (S1). It reports whether it
+// did; a failure leaves the switch in place for the next run.
+func (r *Runner) finishSwitch() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	switched := false
+	err := store.With(ctx, dbPath(r.Root), func(db *sql.DB) error {
+		t, err := store.WriteTarget(ctx, db)
+		if err != nil || !t.Building {
+			return err
+		}
+		if done, err := store.ShadowComplete(ctx, db); err != nil || !done {
+			return err
+		}
+		if err := store.Tx(ctx, db, func(tx *sql.Tx) error { return store.FinishShadow(ctx, tx) }); err != nil {
+			return err
+		}
+		switched = true
+		r.logf("model switch finished: search now uses %s", t.EmbedID)
+		return nil
+	})
+	if err != nil {
+		r.logf("finishing the model switch: %v", err)
+	}
+	return switched
 }
 
 // embed embeds units in batches and fits vectors to the index dimension.
@@ -375,21 +418,6 @@ func (e *eta) save(root string) {
 			return nil
 		})
 	})
-}
-
-// Reembed resets the index for the config's vector space and returns how
-// many documents were queued. Run then rebuilds it; an interrupted rebuild
-// continues on the next run.
-func Reembed(ctx context.Context, root string, cfg config.Config) (int64, error) {
-	var n int64
-	err := store.With(ctx, dbPath(root), func(db *sql.DB) error {
-		return store.Tx(ctx, db, func(tx *sql.Tx) error {
-			var err error
-			n, err = store.ResetForReembed(ctx, tx, SpaceID(cfg), cfg.Embed.Dim)
-			return err
-		})
-	})
-	return n, err
 }
 
 // IsMismatch reports whether err is a model mismatch.

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,13 +27,12 @@ type tuiBackend struct {
 	root string // set once the folder is initialised
 
 	searchOnce sync.Once
-	searcher   *search.Searcher
-	closeQuery func()
+	searcher   *liveSearcher
 }
 
 func (b *tuiBackend) close() {
-	if b.closeQuery != nil {
-		b.closeQuery()
+	if b.searcher != nil {
+		b.searcher.Close()
 	}
 }
 
@@ -191,6 +191,9 @@ func (b *tuiBackend) Status(ctx context.Context) (tui.Status, error) {
 	if m := rep.ModelMismatch; m != nil {
 		s.Mismatch = m.Index + " -> " + m.Config
 	}
+	if sw := rep.ModelSwitch; sw != nil {
+		s.Switch = fmt.Sprintf("%d of %d documents done", sw.Done, sw.Total)
+	}
 	for _, f := range rep.Folders {
 		s.Folders = append(s.Folders, tui.Folder{Path: f.Path, Documents: f.Documents, Exists: f.Exists})
 	}
@@ -214,9 +217,8 @@ func (b *tuiBackend) Search(ctx context.Context, q string, o search.Options) (se
 	if err != nil {
 		return search.Response{}, err
 	}
-	b.searchOnce.Do(func() { b.searcher, b.closeQuery, _ = newSearcher(b.root, cfg) })
-	b.searcher.Cfg = cfg
-	return b.searcher.Search(ctx, q, o)
+	b.searchOnce.Do(func() { b.searcher = newLiveSearcher(b.root) })
+	return b.searcher.Search(ctx, cfg, q, o)
 }
 
 // Watch scans and indexes in the background while the interface is open.
@@ -246,7 +248,7 @@ func (b *tuiBackend) Watch(ctx context.Context, ev func(tui.WatchEvent)) error {
 			ev(tui.WatchEvent{Kind: "error", Text: "model changed: press R to rebuild"})
 			return
 		}
-		if rep.Queued == 0 {
+		if rep.Queued == 0 && !index.Switching(ctx, b.root) {
 			ev(tui.WatchEvent{Kind: "idle"})
 			return
 		}
@@ -275,7 +277,7 @@ func (b *tuiBackend) Reembed(ctx context.Context, ev func(tui.WatchEvent)) error
 	if _, err := scan.Run(ctx, b.root, cfg); err != nil {
 		return err
 	}
-	if _, err := index.Reembed(ctx, b.root, cfg); err != nil {
+	if _, err := index.StartRebuild(ctx, b.root, cfg, false); err != nil {
 		return err
 	}
 	_, err = b.a.indexQueueWith(ctx, b.root, cfg, true, func(p index.Progress) {
