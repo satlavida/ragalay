@@ -2,7 +2,7 @@
 
 **Status:** In progress. All 9 phases done locally (2026-10-06); waiting on user-side items in Phase 8 (publish a release, Mac checks, human double-click test) before archiving.
 **Created:** 2026-10-06 · **Finalized:** 2026-10-06 (after 4 grilling rounds)
-**Follow-ups:** `plans/plan2` (swappable models, OpenAI-compatible endpoints), `plans/plan3` (audio/video, search by example), `plans/plan4` (speed, background indexing, distribution). Renumbered 2026-10-07.
+**Follow-ups:** `plans/archive/plan2` (swappable models, OpenAI-compatible endpoints; completed), `plans/plan3` (audio/video, search by example), `plans/plan4` (speed, background indexing, distribution). Renumbered 2026-10-07.
 
 ---
 

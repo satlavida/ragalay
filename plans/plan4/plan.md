@@ -10,7 +10,7 @@
 - **OCR text** for scanned PDF pages (snippets + keyword search), if page-image retrieval proves insufficient.
 - **PDF page images for external embedding services** (deferred from Plan 2, S12): render pages in Go and send them through the provider image extension. Pick the rendering tool here.
 - **TUI image previews** (kitty/sixel/iTerm protocols).
-- ~~Other providers (vLLM on CUDA, remote Jina API, Ollama)~~ → moved to Plan 2 (swappable models + OpenAI-compatible endpoints).
+- ~~Other providers (vLLM on CUDA, remote Jina API, Ollama)~~ → moved to Plan 2 (swappable models + OpenAI-compatible endpoints; completed, plans/archive/plan2).
 
 ## Open questions
 1. Which of these matter most after daily use of Plans 1–2?
