@@ -1,6 +1,6 @@
 # Plan 2: swappable embedding models and external (OpenAI-compatible) embedding services
 
-**Status:** In progress (started 2026-10-07 at the user's request while Plan 1 waits on its user-side Phase 8 items). Phase 0 done.
+**Status:** Completed (2026-10-07). Started at the user's request while Plan 1 waits on its user-side Phase 8 items. Publishing the release is the user's step.
 **Created:** 2026-10-07 · **Finalized:** 2026-10-07 (open questions answered; 2 grilling rounds)
 **Depends on:** Plan 1 (embed interfaces, `embed_id`, `ragalay reembed`, query cache)
 **Renumbering (2026-10-07):** this plan was drafted as plan4 and moved ahead at the user's request. Audio/video is now Plan 3, and speed/distribution is Plan 4.
@@ -335,8 +335,11 @@ ragalay model test [--json]                     # probe the active runtime / end
 - [x] Tests: TUI with a fake backend (wizard model step; switch to a remote service with key entry, consent, and rebuild; install-then-switch; broken service). Real TUI backend switching Jina → Gemma with the real models (18 s switch, search working before and after). Real double-click test with the new model step (30 s)
 - Exit check (real models and Ollama, Windows): `model use` from Gemma → Ollama (`nomic-embed-text`) → Jina → Gemma. Each step probed or installed as needed, queued the documents, showed ETA progress, finished the switch, and searched correctly afterwards. Search stayed complete during each switch (Phase 3)
 
-### Phase 6: Docs and release
-- [ ] README: "Use a different model" (non-technical first), per-profile licenses, privacy note
-- [ ] CLAUDE.md: project summary, models layout, network-call rule
-- [ ] Release notes, including "existing folders keep Jina"
-- Exit: README reviewed. A tagged release builds on all 5 platforms
+### Phase 6: Docs and release ✅ Completed (2026-10-07)
+- [x] README:
+  - a new non-technical "Use a different model" section: the three choices, the switch keeping search working, the service form, keys per OS, and privacy
+  - setup steps with the model choice, the computer and disk table, privacy, per-profile licenses, troubleshooting, `--prune`
+  - power-user material: commands, `--yes`, exit code 2 now `scan`/`reembed` only, MCP `embed`, `[embed]` / `[embed.openai]` settings, how it works
+- [x] CLAUDE.md: project summary, models layout (profiles, `embed/openai`, shadow switches), migrations on open, network-call rule with consent and keys, `embed_id` rule
+- [x] Release notes in `plans/plan2/release-notes.md` ("existing folders keep Jina", run setup once after updating)
+- Exit check: README reviewed against the shipped behavior (commands, defaults, sizes, and speeds from §3.1). `goreleaser build --snapshot --clean` builds windows/amd64, darwin/arm64, darwin/amd64, linux/amd64, and linux/arm64. Publishing a tagged release (`git tag v… && git push --tags`) is the user's step, as in Plan 1 Phase 8
