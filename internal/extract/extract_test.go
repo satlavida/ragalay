@@ -165,7 +165,7 @@ func TestGoldenMarkdownWithLinkedImages(t *testing.T) {
 	if res.Links[1].HeadingPath != "ragalay guide > Searching > From the terminal" || res.Links[1].Page != 2 {
 		t.Errorf("image context wrong: %+v", res.Links[1])
 	}
-	in := res.Units[len(res.Units)-3].Input(root)
+	in := res.Units[len(res.Units)-3].Input(root, "guide.md")
 	if in.Modality != embed.Image || !strings.HasSuffix(in.Text, "Architecture diagram") {
 		t.Errorf("linked image input should carry its caption: %+v", in)
 	}

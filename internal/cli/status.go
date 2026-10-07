@@ -109,7 +109,7 @@ func statusReport(ctx context.Context, root string) (StatusReport, error) {
 	}
 	if cache, err := setup.CacheDir(); err == nil {
 		st, _ := setup.LoadState(cache)
-		rep.Setup = SetupInfo{Ready: st.Ready(), SearchReady: st.QueryReady(),
+		rep.Setup = SetupInfo{Ready: setupReady(st, cfg.Embed), SearchReady: searchReady(st, cfg.Embed),
 			Device: st.Device, DeviceName: st.DeviceName, CacheDir: cache}
 	}
 	// Setup is machine-wide: a new folder on a set-up computer is ready too.

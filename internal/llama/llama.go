@@ -1,6 +1,7 @@
 // Package llama embeds search queries in-process with llama.cpp (through
-// yzma/purego, no CGO) and the Jina v5 text-small GGUF. Its vectors match the
-// omni indexing model's text vectors (plan1 §3.1: cosine ≈ 0.9997).
+// yzma/purego, no CGO) and a local profile's GGUF. Its vectors match the
+// indexing model's text vectors (cosine ≈ 0.9997 for Jina v5 text-small vs
+// omni, plan1 §3.1; ≈ 0.9999 for EmbeddingGemma 2, plan2 Phase 0).
 package llama
 
 import (
@@ -12,10 +13,9 @@ import (
 	"sync"
 
 	"github.com/hybridgroup/yzma/pkg/llama"
-)
 
-// QueryPrefix is required: without it parity with omni drops to ~0.92.
-const QueryPrefix = "Query: "
+	"github.com/satlavida/ragalay/internal/embed"
+)
 
 // The llama.cpp library can only be loaded once per process.
 var (
@@ -45,11 +45,21 @@ type Embedder struct {
 	ctx   llama.Context
 	vocab llama.Vocab
 	dim   int32
+	opts  Options
 }
+
+// Options are the profile's query settings (embed.Profile).
+type Options struct {
+	Prefix  string // query prompt, e.g. "Query: "
+	Pooling string // embed.PoolLast or embed.PoolMean
+}
+
+// OptionsFor returns a profile's query settings.
+func OptionsFor(p embed.Profile) Options { return Options{Prefix: p.QueryPrefix, Pooling: p.Pooling} }
 
 // Open loads the GGUF model on the CPU (GPU gives nothing for short
 // queries and adds driver risk; plan1 G4).
-func Open(libDir, modelPath string) (*Embedder, error) {
+func Open(libDir, modelPath string, o Options) (*Embedder, error) {
 	if err := loadLibrary(libDir); err != nil {
 		return nil, err
 	}
@@ -70,13 +80,18 @@ func Open(libDir, modelPath string) (*Embedder, error) {
 	cp.NBatch = 2048
 	cp.NUbatch = 2048
 	cp.PoolingType = llama.PoolingTypeLast
+	if o.Pooling == embed.PoolMean {
+		cp.PoolingType = llama.PoolingTypeMean
+	}
 	cp.Embeddings = 1
 	ctx, err := llama.InitFromModel(m, cp)
 	if err != nil {
 		llama.ModelFree(m)
 		return nil, fmt.Errorf("init query context: %w", err)
 	}
-	return &Embedder{model: m, ctx: ctx, vocab: llama.ModelGetVocab(m), dim: llama.ModelNEmbd(m)}, nil
+	// n_embd_out, not n_embd: EmbeddingGemma 2 projects its 512-wide hidden
+	// state to 768 (plan2 Phase 0).
+	return &Embedder{model: m, ctx: ctx, vocab: llama.ModelGetVocab(m), dim: llama.ModelNEmbdOut(m), opts: o}, nil
 }
 
 // EmbedQuery returns the raw (unnormalized) query embedding; callers Fit it.
@@ -98,7 +113,7 @@ func (e *Embedder) EmbedQuery(ctx context.Context, text string) ([]float32, erro
 		return nil, err
 	}
 	llama.MemoryClear(mem, true)
-	toks := llama.Tokenize(e.vocab, QueryPrefix+text, true, true)
+	toks := llama.Tokenize(e.vocab, e.opts.Prefix+text, true, true)
 	if len(toks) > 2048 {
 		toks = toks[:2048]
 	}
@@ -117,9 +132,9 @@ func (e *Embedder) EmbedQuery(ctx context.Context, text string) ([]float32, erro
 }
 
 // Count returns the number of tokens in text with the model's tokenizer.
-// The text-small vocabulary is the omni indexing model's (same Qwen3 text
-// tower), so this is the exact count the chunker needs. Implements
-// chunk.Tokenizer.
+// Each local profile's GGUF shares its indexing model's vocabulary (Qwen3
+// for Jina, Gemma for EmbeddingGemma), so this is the exact count the
+// chunker needs. Implements chunk.Tokenizer.
 func (e *Embedder) Count(text string) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()

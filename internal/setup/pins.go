@@ -1,5 +1,7 @@
 package setup
 
+import "github.com/satlavida/ragalay/internal/embed"
+
 // Everything setup downloads is pinned here, by version and SHA-256. To
 // upgrade, change the pins and re-run the Phase 0 parity checks.
 
@@ -30,43 +32,69 @@ var uvAssets = map[string]Asset{
 	linuxARM64:  {"https://github.com/astral-sh/uv/releases/download/0.12.23/uv-aarch64-unknown-linux-gnu.tar.gz", "6524bd338177ed50d035d39354e12545e993bbeba2ecbddf0480c5b3a81d313f", 18965616},
 }
 
-// llama.cpp CPU build for query embedding (G4). Same release yzma v1.28.0
-// pins (v0.5.0 = upstream b11146); digests from its manifest.
-const llamaVersion = "b11146"
+// llama.cpp CPU build for query embedding (plan1 G4). b11459 is the first
+// release line with EmbeddingGemma 2 (b11454) that yzma v1.29.0 binds: its
+// llama.h differs from yzma's v0.6.0 only by one enum value (plan2 §3).
+// Digests from the GitHub release.
+const llamaVersion = "b11459"
 
 var llamaAssets = map[string]Asset{
-	winAMD64:    {"https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-win-cpu-x64.zip", "14cf1303ca9ac3abd94816850532f9f9a69ac66fbaca3776fc6f9061c2fac1d1", 30_000_000},
-	darwinARM64: {"https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-macos-arm64.tar.gz", "1ad3f9eff80edb9dbef4259ad564d1720612ef7eea48fa4afed0e54f5f3d5711", 30_000_000},
-	darwinAMD64: {"https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-macos-x64.tar.gz", "305f0e3a17d2c01eb205cd0a62128357f1ec3b55329cb084d94e5ec0115d7a3b", 30_000_000},
-	linuxAMD64:  {"https://github.com/ggml-org/llama.cpp/releases/download/b11146/llama-b11146-bin-ubuntu-x64.tar.gz", "c150306eb16b5ab696f76a8bdf810c35fd98a24e82158742e6fa28f420ff8410", 30_000_000},
-	linuxARM64:  {"https://github.com/hybridgroup/llama-cpp-builder/releases/download/v0.5.0/llama-v0.5.0-bin-ubuntu-cpu-arm64.tar.gz", "49b34d29905bf91d3d21f25ca4fcffbd3567c3a936737d2a2eb6c169ef9020ca", 30_000_000},
+	winAMD64:    {"https://github.com/ggml-org/llama.cpp/releases/download/b11459/llama-b11459-bin-win-cpu-x64.zip", "3aeb34d2a64eddb10bbe2f022834d5d7428f03103380b110c33d521bbf11a637", 19438390},
+	darwinARM64: {"https://github.com/ggml-org/llama.cpp/releases/download/b11459/llama-b11459-bin-macos-arm64.tar.gz", "04cd4ab4fd748af1abc02d8d1759b55121141a377c97c297192e9608de2e8c4e", 12007697},
+	darwinAMD64: {"https://github.com/ggml-org/llama.cpp/releases/download/b11459/llama-b11459-bin-macos-x64.tar.gz", "60324b4be8194dcd7e75de204fe6c15cd409f96956417b9edf8ec0548518307a", 11525370},
+	linuxAMD64:  {"https://github.com/ggml-org/llama.cpp/releases/download/b11459/llama-b11459-bin-ubuntu-x64.tar.gz", "90a33b328164667853e235d7061ce627dcd684c9651d80bfd69d764484d5f1a7", 17732675},
+	linuxARM64:  {"https://github.com/ggml-org/llama.cpp/releases/download/b11459/llama-b11459-bin-ubuntu-arm64.tar.gz", "d0cb5dbd38c3ec0ea1e8d3db23cd57c34438edc1f7e1877256ea2e1b9fd4a32c", 13724736},
 }
 
-// Query model: Jina v5 text-small retrieval, Q8_0 (plan1 §3.1 parity).
-var queryModel = struct {
+// QueryModel is a local profile's search model (a GGUF for llama.cpp).
+type QueryModel struct {
 	Asset
 	File string
-}{
-	Asset: Asset{
-		URL:    "https://huggingface.co/jinaai/jina-embeddings-v5-text-small-retrieval-GGUF/resolve/78b0ebcb4c870fdfef409e578b65288b49a4fa90/v5-small-retrieval-Q8_0.gguf",
-		SHA256: "b759677362414e664160ffb017fbc74c300feaa4ad4085f69f2cc1bfa12ccb71",
-		Size:   639447424,
-	},
-	File: "v5-small-retrieval-Q8_0.gguf",
+	ID   string // names the model in the query cache key
 }
 
-// QueryModelID names the query model for the query cache key.
-const QueryModelID = "jina-embeddings-v5-text-small-retrieval-Q8_0@78b0ebc"
+// Search models per local profile, both Q8_0 (plan1 §3.1, plan2 Phase 0:
+// parity 0.9997 for Jina, 0.9999 for Gemma).
+var queryModels = map[string]QueryModel{
+	embed.JinaV5: {
+		Asset: Asset{
+			URL:    "https://huggingface.co/jinaai/jina-embeddings-v5-text-small-retrieval-GGUF/resolve/78b0ebcb4c870fdfef409e578b65288b49a4fa90/v5-small-retrieval-Q8_0.gguf",
+			SHA256: "b759677362414e664160ffb017fbc74c300feaa4ad4085f69f2cc1bfa12ccb71",
+			Size:   639447424,
+		},
+		File: "v5-small-retrieval-Q8_0.gguf",
+		ID:   "jina-embeddings-v5-text-small-retrieval-Q8_0@78b0ebc",
+	},
+	embed.Gemma2: {
+		Asset: Asset{
+			URL:    "https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd298762cc34d0357ece5ebdd31791a3a374d8/embeddinggemma-2-Q8_0.gguf",
+			SHA256: "2188ac1deca4b77dffefd603c2776a9d76d9d74ec01841392982ebb840b09135",
+			Size:   309855456,
+		},
+		File: "embeddinggemma-2-Q8_0.gguf",
+		ID:   "embeddinggemma-2-Q8_0@bfcd298",
+	},
+}
 
-// Indexing model weights (downloaded by the sidecar from Hugging Face).
-const indexModelSize = 4_300_000_000
+// QueryModelFor returns a local profile's search model.
+func QueryModelFor(profile string) (QueryModel, bool) {
+	q, ok := queryModels[profile]
+	return q, ok
+}
+
+// Indexing model weights per local profile (downloaded by the sidecar from
+// Hugging Face), for the download-size prompt.
+var indexModelSizes = map[string]int64{
+	embed.JinaV5: 4_300_000_000,
+	embed.Gemma2: 1_488_915_288,
+}
 
 // Python environment for the indexing sidecar.
 const pythonVersion = "3.11"
 
 // Packages installed after torch, from PyPI. Versions tested in Phase 0.
 var pythonPackages = []string{
-	"transformers==5.18.0",
+	"transformers==5.19.0", // 5.19 adds embedding_gemma2 (plan2 Phase 0)
 	"sentence-transformers==6.1.0",
 	"huggingface-hub==1.33.0",
 	"pillow==12.3.0",

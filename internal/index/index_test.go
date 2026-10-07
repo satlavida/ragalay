@@ -109,6 +109,7 @@ func mixedRoot(t *testing.T) (string, config.Config) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, config.DirName), 0o755)
 	cfg := config.Default()
+	cfg.Embed, _ = cfg.Embed.UseProfile(embed.JinaV5, 1024) // the fake embedders are 1024-dim
 	cfg.Pairs = []config.Pair{{MD: "md", PDF: "pdf"}}
 	config.Save(root, cfg)
 	ctx := context.Background()

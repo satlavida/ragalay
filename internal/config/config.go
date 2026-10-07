@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/satlavida/ragalay/internal/embed"
 )
 
 const (
@@ -24,9 +26,6 @@ const (
 
 // Kinds that Plan 1 can ingest.
 var supportedKinds = []string{"md", "pdf", "image"}
-
-// Matryoshka dimensions supported by Jina v5.
-var supportedDims = []int{1024, 768, 512, 256, 128, 64, 32}
 
 type Config struct {
 	Scan   Scan   `toml:"scan"`
@@ -67,14 +66,6 @@ type Chunk struct {
 	Overlap int `toml:"overlap"`
 }
 
-type Embed struct {
-	Dim           int    `toml:"dim"`
-	IndexModel    string `toml:"index_model"`
-	IndexRevision string `toml:"index_revision"`
-	QueryModel    string `toml:"query_model"`
-	ImageMaxSide  int    `toml:"image_max_side"`
-}
-
 type Cache struct {
 	QueryMax int      `toml:"query_max"`
 	QueryTTL Duration `toml:"query_ttl"`
@@ -107,15 +98,9 @@ func Default() Config {
 			Ignore:  []string{"**/node_modules/**", "**/.git/**"},
 			Kinds:   []string{"md", "pdf", "image"},
 		},
-		Index: Index{PDFPageImages: true},
-		Chunk: Chunk{Tokens: 256, Overlap: 32},
-		Embed: Embed{
-			Dim:           1024,
-			IndexModel:    "jinaai/jina-embeddings-v5-omni-small-retrieval",
-			IndexRevision: "e3ae4b6e4af4ec0799cd931aefaff03235b5f9d4",
-			QueryModel:    "jinaai/jina-embeddings-v5-text-small-retrieval-GGUF:Q8_0",
-			ImageMaxSide:  1024,
-		},
+		Index:  Index{PDFPageImages: true},
+		Chunk:  Chunk{Tokens: 256, Overlap: 32},
+		Embed:  Embed{Profile: embed.DefaultProfile, Dim: 768, ImageMaxSide: 1024},
 		Cache:  Cache{QueryMax: 10000, QueryTTL: Duration{720 * time.Hour}},
 		Update: Update{Check: true},
 	}
@@ -139,6 +124,10 @@ func Load(root string) (Config, error) {
 		}
 		return Config{}, fmt.Errorf("%s: unknown keys: %s", Path(root), strings.Join(keys, ", "))
 	}
+	cfg.Embed.migrate(md.IsDefined("embed", "profile"))
+	if o := cfg.Embed.OpenAI; o != nil {
+		fillOpenAIDefaults(o)
+	}
 	if cfg.Scan.Folders == nil {
 		cfg.Scan.Folders = []string{}
 	}
@@ -157,7 +146,10 @@ const header = `# ragalay configuration. Edit freely; run "ragalay status" to ch
 #                   [[pairs]]
 #                   md = "md"
 #                   pdf = "pdf"
-# [embed] dim:    1024, 768, 512, 256, 128, 64 or 32. Changing it means a re-embed.
+# [embed]:        the AI model. Change it with "ragalay model use <name>" (it rebuilds
+#                 the index; search keeps working meanwhile). profile is
+#                 embeddinggemma-2, jina-v5 or openai (any OpenAI-compatible service,
+#                 set up in [embed.openai]). Changing dim also means a rebuild.
 
 `
 
@@ -216,15 +208,7 @@ func (c Config) Validate() error {
 	if c.Chunk.Overlap < 0 || c.Chunk.Overlap >= c.Chunk.Tokens {
 		errs = append(errs, fmt.Errorf("chunk.overlap: %d must be >= 0 and smaller than chunk.tokens", c.Chunk.Overlap))
 	}
-	if !slices.Contains(supportedDims, c.Embed.Dim) {
-		errs = append(errs, fmt.Errorf("embed.dim: %d is not one of %v", c.Embed.Dim, supportedDims))
-	}
-	if c.Embed.IndexModel == "" || c.Embed.QueryModel == "" {
-		errs = append(errs, errors.New("embed: index_model and query_model are required"))
-	}
-	if c.Embed.ImageMaxSide < 224 || c.Embed.ImageMaxSide > 2048 {
-		errs = append(errs, fmt.Errorf("embed.image_max_side: %d must be between 224 and 2048", c.Embed.ImageMaxSide))
-	}
+	errs = append(errs, c.Embed.validate()...)
 	if c.Cache.QueryMax < 0 {
 		errs = append(errs, errors.New("cache.query_max must be >= 0"))
 	}
@@ -251,4 +235,24 @@ func checkRelative(p string) error {
 		}
 	}
 	return nil
+}
+
+// fillOpenAIDefaults gives keys missing from [embed.openai] their defaults.
+func fillOpenAIDefaults(o *OpenAI) {
+	d := DefaultOpenAI()
+	if o.ImageInput == "" {
+		o.ImageInput = d.ImageInput
+	}
+	if o.BatchSize == 0 {
+		o.BatchSize = d.BatchSize
+	}
+	if o.MaxInputTokens == 0 {
+		o.MaxInputTokens = d.MaxInputTokens
+	}
+	if o.Timeout.Duration == 0 {
+		o.Timeout = d.Timeout
+	}
+	if o.QueryTimeout.Duration == 0 {
+		o.QueryTimeout = d.QueryTimeout
+	}
 }

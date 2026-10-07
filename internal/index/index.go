@@ -34,9 +34,7 @@ func (e *ErrModelMismatch) Error() string {
 }
 
 // SpaceID is the embed_id the config asks for.
-func SpaceID(cfg config.Config) string {
-	return embed.ID(cfg.Embed.IndexModel, cfg.Embed.IndexRevision, cfg.Embed.Dim)
-}
+func SpaceID(cfg config.Config) string { return cfg.Embed.SpaceID() }
 
 // CheckSpace compares the index with the config. A fresh index (no embed_id
 // yet) adopts the config's space.
@@ -198,7 +196,7 @@ func (r *Runner) Run(ctx context.Context) (Summary, error) {
 					return sum, fmt.Errorf("start indexing model: %w", err)
 				}
 			}
-			rows, err = r.embed(ctx, emb, res.Units)
+			rows, err = r.embed(ctx, emb, job.Path, res.Units)
 		}
 		if ctx.Err() != nil {
 			r.release(job.ID) // interrupted: try again next time
@@ -243,7 +241,7 @@ func (r *Runner) Run(ctx context.Context) (Summary, error) {
 }
 
 // embed embeds units in batches and fits vectors to the index dimension.
-func (r *Runner) embed(ctx context.Context, emb Embedder, units []extract.Unit) ([]store.ChunkRow, error) {
+func (r *Runner) embed(ctx context.Context, emb Embedder, docPath string, units []extract.Unit) ([]store.ChunkRow, error) {
 	batch := r.BatchSize
 	if batch <= 0 {
 		batch = 16
@@ -253,7 +251,7 @@ func (r *Runner) embed(ctx context.Context, emb Embedder, units []extract.Unit) 
 		end := min(i+batch, len(units))
 		in := make([]embed.Input, end-i)
 		for j, u := range units[i:end] {
-			in[j] = u.Input(r.Root)
+			in[j] = u.Input(r.Root, docPath)
 		}
 		vecs, err := emb.EmbedDocuments(ctx, in)
 		if err != nil {

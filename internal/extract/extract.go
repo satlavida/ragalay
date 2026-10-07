@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 
@@ -25,23 +26,28 @@ type Unit struct {
 
 // Input converts the unit to what the indexing model embeds. Text gets its
 // heading path as context; linked images are embedded together with their
-// caption (combined input, plan1 §3.1).
-func (u Unit) Input(root string) embed.Input {
+// caption (combined input, plan1 §3.1). docPath (slash form) gives the title
+// that models with a title prompt use: file name + heading path (plan2 S9).
+func (u Unit) Input(root, docPath string) embed.Input {
+	title := path.Base(docPath)
+	if u.HeadingPath != "" {
+		title += " > " + u.HeadingPath
+	}
 	switch u.Modality {
 	case embed.Text:
 		t := u.Text
 		if u.HeadingPath != "" {
 			t = u.HeadingPath + "\n\n" + t
 		}
-		return embed.Input{Modality: embed.Text, Text: t}
+		return embed.Input{Modality: embed.Text, Text: t, Title: title}
 	case embed.PDFPage:
-		return embed.Input{Modality: embed.PDFPage, Path: filepath.Join(root, filepath.FromSlash(u.Source)), Page: u.Page - 1}
+		return embed.Input{Modality: embed.PDFPage, Path: filepath.Join(root, filepath.FromSlash(u.Source)), Page: u.Page - 1, Title: title}
 	}
 	caption := u.Text
 	if u.HeadingPath != "" && caption != "" {
 		caption = u.HeadingPath + ": " + caption
 	}
-	return embed.Input{Modality: embed.Image, Path: filepath.Join(root, filepath.FromSlash(u.Source)), Text: caption}
+	return embed.Input{Modality: embed.Image, Path: filepath.Join(root, filepath.FromSlash(u.Source)), Text: caption, Title: title}
 }
 
 // Result is everything extracted from one document.

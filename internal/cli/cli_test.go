@@ -66,7 +66,7 @@ func TestPhase1Flow(t *testing.T) {
 		t.Fatalf("status --json is not JSON: %v\n%s", err, out)
 	}
 	if rep.WholeDir || len(rep.Folders) != 2 || rep.Folders[0].Path != "docs" || rep.Folders[1].Path != "notes" ||
-		!rep.Folders[0].Exists || rep.Index.SchemaVersion != store.SchemaVersion || rep.Index.EmbedDim != 1024 ||
+		!rep.Folders[0].Exists || rep.Index.SchemaVersion != store.SchemaVersion || rep.Index.EmbedDim != 768 ||
 		rep.SetupComplete || len(rep.ConfigErrors) != 0 {
 		t.Fatalf("unexpected status: %+v", rep)
 	}
@@ -96,7 +96,7 @@ func TestRootFlagAndConfigErrors(t *testing.T) {
 	}
 	cfg := filepath.Join(root, ".ragalay", "config.toml")
 	data, _ := os.ReadFile(cfg)
-	os.WriteFile(cfg, []byte(strings.Replace(string(data), "dim = 1024", "dim = 1000", 1)), 0o644)
+	os.WriteFile(cfg, []byte(strings.Replace(string(data), "dim = 768", "dim = 1000", 1)), 0o644)
 
 	code, out, stderr := runCLI(t, "status", "--json", "--root", root)
 	if code != ExitOK {
@@ -199,9 +199,21 @@ func TestSetupNeedsLicenseWithoutTerminal(t *testing.T) {
 	if code, _, stderr := runCLI(t, "init", root); code != ExitOK {
 		t.Fatalf("init: %s", stderr)
 	}
+	// The default model (Gemma 2) has no license to accept, but setup still
+	// refuses to download without a terminal or --yes.
 	code, out, stderr := runCLI(t, "setup", "--root", root, "--device", "cpu")
+	if code != ExitSetupIncomplete || !strings.Contains(out, "Apache 2.0") || !strings.Contains(out, "EmbeddingGemma 2") ||
+		!strings.Contains(stderr, "--yes") {
+		t.Fatalf("setup (gemma) without terminal: code %d\n%s\n%s", code, out, stderr)
+	}
+	// Jina's non-commercial license must be accepted first.
+	cfgPath := filepath.Join(root, ".ragalay", "config.toml")
+	data, _ := os.ReadFile(cfgPath)
+	jina := strings.Replace(strings.Replace(string(data), `profile = "embeddinggemma-2"`, `profile = "jina-v5"`, 1), "dim = 768", "dim = 1024", 1)
+	os.WriteFile(cfgPath, []byte(jina), 0o644)
+	code, out, stderr = runCLI(t, "setup", "--root", root, "--device", "cpu")
 	if code != ExitSetupIncomplete || !strings.Contains(out, "CC BY-NC 4.0") || !strings.Contains(stderr, "--accept-license") {
-		t.Fatalf("setup without terminal: code %d\n%s\n%s", code, out, stderr)
+		t.Fatalf("setup (jina) without terminal: code %d\n%s\n%s", code, out, stderr)
 	}
 	// With the license accepted but no --yes, it still refuses to download silently.
 	code, out, stderr = runCLI(t, "setup", "--root", root, "--device", "cpu", "--accept-license")

@@ -54,7 +54,8 @@ func defaultDir() string {
 }
 
 func (b *tuiBackend) FirstRun(ctx context.Context) (tui.FirstRun, error) {
-	fr := tui.FirstRun{License: licenseText}
+	fr := tui.FirstRun{}
+	emb := config.Default().Embed
 	if root, err := b.a.root(); err == nil {
 		b.root, fr.Dir = root, root
 	} else if errors.Is(err, config.ErrNotInitialized) {
@@ -69,12 +70,18 @@ func (b *tuiBackend) FirstRun(ctx context.Context) (tui.FirstRun, error) {
 	} else {
 		return fr, err
 	}
+	if b.root != "" {
+		if cfg, err := config.Load(b.root); err == nil {
+			emb = cfg.Embed
+		}
+	}
+	fr.License = licenseText(emb.Profile)
 	cache, err := setup.CacheDir()
 	if err != nil {
 		return fr, err
 	}
 	st, _ := setup.LoadState(cache)
-	fr.NeedSetup = !st.Ready()
+	fr.NeedSetup = !setupReady(st, emb)
 	return fr, nil
 }
 
@@ -97,7 +104,7 @@ func (b *tuiBackend) setupOpts() (setup.Options, string, error) {
 		return setup.Options{}, "", err
 	}
 	cache, err := setup.CacheDir()
-	return setup.Options{Model: cfg.Embed.IndexModel, Revision: cfg.Embed.IndexRevision, MaxSide: cfg.Embed.ImageMaxSide}, cache, err
+	return setup.Options{Profile: cfg.Embed.Profile, MaxSide: cfg.Embed.ImageMaxSide}, cache, err
 }
 
 func (b *tuiBackend) SetupPlan(ctx context.Context) (tui.Plan, error) {
@@ -146,11 +153,10 @@ func (b *tuiBackend) RunSetup(ctx context.Context, ev func(tui.SetupEvent)) erro
 	if err != nil {
 		return err
 	}
-	if st.LicenseAccepted == "" {
-		st.LicenseAccepted = time.Now().UTC().Format(time.RFC3339)
-		if err := st.Save(cache); err != nil {
-			return err
-		}
+	// The wizard showed the license screen before this.
+	st.AcceptLicense(opts.Profile)
+	if err := st.Save(cache); err != nil {
+		return err
 	}
 	logFile, err := os.OpenFile(filepath.Join(b.root, config.DirName, config.LogsDir, "setup.log"),
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)

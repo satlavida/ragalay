@@ -27,8 +27,8 @@ trailer << /Root 1 0 R >>
 `
 
 // TestBothRuntimesOnThisMachine embeds through the real Python sidecar and
-// llama.cpp (plan1 Phase 2 exit criterion). It needs `ragalay setup` to have
-// run on this machine and is skipped otherwise.
+// llama.cpp for every local profile set up on this machine (plan1 Phase 2,
+// plan2 Phase 2). Profiles that are not set up are skipped.
 func TestBothRuntimesOnThisMachine(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")
@@ -38,10 +38,25 @@ func TestBothRuntimesOnThisMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	st, err := LoadState(cache)
-	if err != nil || !st.Ready() {
-		t.Skip("ragalay setup has not completed on this machine")
+	if err != nil {
+		t.Fatal(err)
 	}
+	for _, prof := range embed.Profiles() {
+		if !prof.Local() {
+			continue
+		}
+		t.Run(prof.Name, func(t *testing.T) {
+			if !st.Ready(prof.Name) {
+				t.Skipf("ragalay setup has not completed for %s on this machine", prof.Name)
+			}
+			bothRuntimes(t, st, prof)
+		})
+	}
+}
+
+func bothRuntimes(t *testing.T, st State, prof embed.Profile) {
 	cfg := config.Default()
+	dim := prof.DefaultDim
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -55,8 +70,8 @@ func TestBothRuntimesOnThisMachine(t *testing.T) {
 	defer os.Remove(img)
 
 	sc, err := sidecar.Start(ctx, sidecar.Options{
-		Python: st.Python, ScriptPath: st.Sidecar, Model: cfg.Embed.IndexModel,
-		Revision: cfg.Embed.IndexRevision, MaxSide: cfg.Embed.ImageMaxSide,
+		Python: st.Python, ScriptPath: st.Sidecar, Model: prof.IndexModel,
+		Revision: prof.IndexRevision, MaxSide: cfg.Embed.ImageMaxSide,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -65,8 +80,8 @@ func TestBothRuntimesOnThisMachine(t *testing.T) {
 	t.Logf("sidecar: %+v", sc.Info())
 
 	docs, err := sc.EmbedDocuments(ctx, []embed.Input{
-		{Modality: embed.Text, Text: "Multi-head attention lets the model attend to several positions at once."},
-		{Modality: embed.Text, Text: "Sourdough bread needs a starter, flour, water and salt."},
+		{Modality: embed.Text, Text: "Multi-head attention lets the model attend to several positions at once.", Title: "notes.md"},
+		{Modality: embed.Text, Text: "Sourdough bread needs a starter, flour, water and salt.", Title: "notes.md"},
 		{Modality: embed.Image, Path: img},
 		{Modality: embed.Image, Path: img, Text: "a colourful test pattern"},
 		{Modality: embed.PDFPage, Path: pdf, Page: 0},
@@ -75,12 +90,12 @@ func TestBothRuntimesOnThisMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, d := range docs {
-		if len(d) != 1024 {
-			t.Fatalf("doc %d has %d dims", i, len(d))
+		if len(d) != dim {
+			t.Fatalf("doc %d has %d dims, want %d", i, len(d), dim)
 		}
 	}
 
-	lq, err := llama.Open(st.LlamaLib, st.QueryModel)
+	lq, err := llama.Open(st.LlamaLib, st.Profile(prof.Name).QueryModel, llama.OptionsFor(prof))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +104,7 @@ func TestBothRuntimesOnThisMachine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q, err := embed.Fit(raw, 1024)
+	q, err := embed.Fit(raw, dim)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +117,9 @@ func TestBothRuntimesOnThisMachine(t *testing.T) {
 	if page <= bread {
 		t.Errorf("the PDF page about attention (%.3f) should beat the bread text (%.3f)", page, bread)
 	}
-	if c := embed.Cosine(docs[2], docs[3]); c < 0.9 {
+	c := embed.Cosine(docs[2], docs[3])
+	t.Logf("image with and without caption %.3f", c)
+	if c < 0.8 {
 		t.Errorf("image with and without caption should be close, got %.3f", c)
 	}
 

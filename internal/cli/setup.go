@@ -21,13 +21,27 @@ import (
 	"github.com/satlavida/ragalay/internal/store"
 )
 
-const licenseText = `ragalay uses two AI models made by Jina AI:
+const jinaLicenseText = `This folder uses two AI models made by Jina AI:
   - jina-embeddings-v5-omni-small-retrieval  (indexes your files)
   - jina-embeddings-v5-text-small-retrieval  (understands your searches)
 
 Both are licensed CC BY-NC 4.0: free for personal and research use,
 NOT for commercial use. Details: https://creativecommons.org/licenses/by-nc/4.0/
 ragalay itself is Apache-2.0. Nothing you index leaves your computer.`
+
+const gemmaLicenseText = `This folder uses EmbeddingGemma 2, an AI model made by Google, to index
+your files and understand your searches.
+
+It is licensed Apache 2.0: free for any use, including commercial.
+ragalay itself is Apache-2.0. Nothing you index leaves your computer.`
+
+// licenseText is what a profile's setup shows before downloading.
+func licenseText(profile string) string {
+	if profile == embed.JinaV5 {
+		return jinaLicenseText
+	}
+	return gemmaLicenseText
+}
 
 func (a *app) setupCmd() *cobra.Command {
 	var device string
@@ -56,10 +70,16 @@ self-test. Safe to run again: finished steps are skipped.`,
 			if err != nil {
 				return err
 			}
-			opts := setup.Options{
-				Device: device, Model: cfg.Embed.IndexModel, Revision: cfg.Embed.IndexRevision,
-				MaxSide: cfg.Embed.ImageMaxSide,
+			prof, err := cfg.Embed.Lookup()
+			if err != nil {
+				return err
 			}
+			if !prof.Local() {
+				fmt.Fprintf(a.stdout, "This folder uses %s at %s; there is nothing to install.\n",
+					cfg.Embed.OpenAI.Model, cfg.Embed.OpenAI.Host())
+				return nil
+			}
+			opts := setup.Options{Device: device, Profile: prof.Name, MaxSide: cfg.Embed.ImageMaxSide}
 			st, err := setup.LoadState(cache)
 			if err != nil {
 				return err
@@ -70,8 +90,12 @@ self-test. Safe to run again: finished steps are skipped.`,
 			}
 
 			w := a.stdout
-			if st.LicenseAccepted == "" {
-				fmt.Fprintln(w, licenseText)
+			if !prof.NonCommercial && len(plan.Downloads) > 0 {
+				fmt.Fprintln(w, licenseText(prof.Name))
+				fmt.Fprintln(w)
+			}
+			if prof.NonCommercial && st.Profile(prof.Name).LicenseAccepted == "" {
+				fmt.Fprintln(w, licenseText(prof.Name))
 				fmt.Fprintln(w)
 				if !acceptLicense {
 					ok, err := a.confirm("Do you accept these terms? Type yes to continue: ", true)
@@ -82,7 +106,7 @@ self-test. Safe to run again: finished steps are skipped.`,
 						return &exitError{ExitSetupIncomplete, errors.New("setup needs the model license accepted (or pass --accept-license)")}
 					}
 				}
-				st.LicenseAccepted = time.Now().UTC().Format(time.RFC3339)
+				st.AcceptLicense(prof.Name)
 				if err := st.Save(cache); err != nil {
 					return err
 				}
@@ -130,7 +154,7 @@ self-test. Safe to run again: finished steps are skipped.`,
 		},
 	}
 	cmd.Flags().StringVar(&device, "device", "auto", "indexing accelerator: auto, cpu, cuda, mps, rocm-gfx1201, rocm-gfx1200")
-	cmd.Flags().BoolVar(&acceptLicense, "accept-license", false, "accept the CC BY-NC 4.0 model license without asking")
+	cmd.Flags().BoolVar(&acceptLicense, "accept-license", false, "accept a non-commercial model license (Jina v5) without asking")
 	cmd.Flags().BoolVar(&yes, "yes", false, "download without asking")
 	return cmd
 }
@@ -141,16 +165,17 @@ self-test. Safe to run again: finished steps are skipped.`,
 func recordSetup(ctx context.Context, root string, cfg config.Config, st setup.State) error {
 	return store.With(ctx, dbPath(root), func(db *sql.DB) error {
 		return store.Tx(ctx, db, func(tx *sql.Tx) error {
-			if err := store.SetMeta(ctx, tx, "license_accepted_at", st.LicenseAccepted); err != nil {
-				return err
+			if at := st.Profile(cfg.Embed.Profile).LicenseAccepted; at != "" {
+				if err := store.SetMeta(ctx, tx, "license_accepted_at", at); err != nil {
+					return err
+				}
 			}
 			cur, err := store.Meta(ctx, tx, "embed_id")
 			if err != nil {
 				return err
 			}
 			if cur == "" {
-				id := embed.ID(cfg.Embed.IndexModel, cfg.Embed.IndexRevision, cfg.Embed.Dim)
-				if err := store.SetMeta(ctx, tx, "embed_id", id); err != nil {
+				if err := store.SetMeta(ctx, tx, "embed_id", cfg.Embed.SpaceID()); err != nil {
 					return err
 				}
 			}

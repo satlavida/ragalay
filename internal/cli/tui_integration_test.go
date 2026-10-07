@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/satlavida/ragalay/internal/config"
 	"github.com/satlavida/ragalay/internal/setup"
 	"github.com/satlavida/ragalay/internal/tui"
 )
@@ -59,7 +60,7 @@ func TestDoubleClickToSearch(t *testing.T) {
 		t.Skip("integration test")
 	}
 	cache, _ := setup.CacheDir()
-	if st, _ := setup.LoadState(cache); !st.Ready() {
+	if st, _ := setup.LoadState(cache); !st.Ready(config.Default().Embed.Profile) {
 		t.Skip("ragalay setup has not completed on this machine")
 	}
 	root := t.TempDir()

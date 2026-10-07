@@ -1,7 +1,8 @@
-// Package setup installs and verifies everything ragalay needs outside the
-// binary: uv, a Python venv with the right torch build, the indexing model,
-// llama.cpp and the query model. It is machine-wide (one setup in the cache
-// dir serves every ragalay folder) and idempotent.
+// Package setup installs and verifies everything a local embedding profile
+// needs outside the binary: uv, a Python venv with the right torch build,
+// the profile's indexing model, llama.cpp and the profile's query model. It
+// is machine-wide (one setup in the cache dir serves every ragalay folder)
+// and idempotent. Profiles are installed separately (plan2 §5.5).
 package setup
 
 import (
@@ -29,8 +30,9 @@ import (
 	"github.com/satlavida/ragalay/internal/sidecar"
 )
 
-// MinParity is the lowest acceptable cosine between the omni and llama.cpp
-// embeddings of the same query (plan1 §3.1 measured 0.9996 minimum).
+// MinParity is the lowest acceptable cosine between the indexing model's and
+// llama.cpp's embeddings of the same query (measured minimums: 0.9996 Jina,
+// plan1 §3.1; 0.9998 Gemma, plan2 Phase 0).
 const MinParity = 0.99
 
 // Reporter receives progress. All methods may be called from one goroutine
@@ -49,12 +51,24 @@ func (nopReporter) Note(string)           {}
 
 // Options configure Run.
 type Options struct {
-	Device   string // torch variant override; "" or "auto" detects
-	Model    string // indexing model
-	Revision string // pinned indexing model revision
-	MaxSide  int
-	Log      io.Writer // command output and sidecar stderr
-	Report   Reporter
+	Device  string // torch variant override; "" or "auto" detects
+	Profile string // local embedding profile (embed.Gemma2, embed.JinaV5)
+	MaxSide int
+	Log     io.Writer // command output and sidecar stderr
+	Report  Reporter
+}
+
+// profile resolves opts.Profile to a local profile and its search model.
+func (o Options) profile() (embed.Profile, QueryModel, error) {
+	p, ok := embed.Lookup(o.Profile)
+	if !ok || !p.Local() {
+		return p, QueryModel{}, fmt.Errorf("%q is not a model ragalay installs", o.Profile)
+	}
+	q, ok := queryModels[p.Name]
+	if !ok {
+		return p, q, fmt.Errorf("no search model pinned for %s", p.Name)
+	}
+	return p, q, nil
 }
 
 // Item is one pending download, for the size prompt.
@@ -76,6 +90,10 @@ func Prepare(ctx context.Context, cache string, opts Options) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	prof, qm, err := opts.profile()
+	if err != nil {
+		return Plan{}, err
+	}
 	det := Detect(ctx, opts.Device)
 	v, ok := variants[det.Variant]
 	if !ok {
@@ -89,17 +107,20 @@ func Prepare(ctx context.Context, cache string, opts Options) (Plan, error) {
 	if st.UVVersion != uvVersion || !fileExists(st.UV) {
 		add("uv (Python manager)", uvAssets[platform()].Size)
 	}
-	if st.Variant != v.Name || st.PackagesHash != packagesHash(v) || !fileExists(st.Python) {
+	switch {
+	case st.Variant != v.Name || !fileExists(st.Python):
 		add("Python 3.11 + PyTorch ("+v.Name+") + libraries", 60_000_000+v.Size+150_000_000)
+	case st.PackagesHash != packagesHash(v):
+		add("Python library updates", 20_000_000)
 	}
-	if st.IndexModel != opts.Model+"@"+opts.Revision {
-		add("indexing model (Jina v5 omni-small)", indexModelSize)
+	if st.Profile(prof.Name).IndexModel != prof.IndexModel+"@"+prof.IndexRevision {
+		add("indexing model ("+prof.Title+")", indexModelSizes[prof.Name])
 	}
 	if st.LlamaVersion != llamaVersion || st.LlamaLib == "" {
 		add("llama.cpp (search)", llamaAssets[platform()].Size)
 	}
-	if !fileExists(st.QueryModel) {
-		add("search model (Jina v5 text-small Q8_0)", queryModel.Size)
+	if !fileExists(filepath.Join(cache, "models", qm.File)) {
+		add("search model ("+prof.Title+")", qm.Size)
 	}
 	return p, nil
 }
@@ -116,6 +137,10 @@ func Run(ctx context.Context, cache string, opts Options) (State, error) {
 		return State{}, fmt.Errorf("ragalay does not support %s yet", platform())
 	}
 	st, err := LoadState(cache)
+	if err != nil {
+		return st, err
+	}
+	prof, qm, err := opts.profile()
 	if err != nil {
 		return st, err
 	}
@@ -142,13 +167,12 @@ func Run(ctx context.Context, cache string, opts Options) (State, error) {
 	}
 
 	r.Step(3, steps, "Indexing helper")
-	st.Sidecar = filepath.Join(cache, "py", "sidecar.py")
-	if err := writeIfChanged(st.Sidecar, sidecar.Script); err != nil {
+	if err := EnsureSidecar(cache, &st); err != nil {
 		return st, err
 	}
 
-	r.Step(4, steps, "Indexing model (about 4 GB)")
-	if err := ensureIndexModel(ctx, &st, opts, r); err != nil {
+	r.Step(4, steps, fmt.Sprintf("Indexing model (%s, about %s)", prof.Title, humanSize(indexModelSizes[prof.Name])))
+	if err := ensureIndexModel(ctx, &st, prof, opts, r); err != nil {
 		return st, err
 	}
 	if err := save(); err != nil {
@@ -164,19 +188,45 @@ func Run(ctx context.Context, cache string, opts Options) (State, error) {
 	}
 
 	r.Step(6, steps, "Search model")
-	st.QueryModel = filepath.Join(cache, "models", queryModel.File)
-	if err := download.File(ctx, queryModel.URL, st.QueryModel, queryModel.SHA256, r.Progress); err != nil {
+	gguf := filepath.Join(cache, "models", qm.File)
+	if err := download.File(ctx, qm.URL, gguf, qm.SHA256, r.Progress); err != nil {
 		return st, err
 	}
+	ps := st.Profile(prof.Name)
+	ps.QueryModel = gguf
+	st.SetProfile(prof.Name, ps)
 	if err := save(); err != nil {
 		return st, err
 	}
 
 	r.Step(7, steps, "Self-test")
-	if err := selfTest(ctx, &st, opts, r); err != nil {
+	if err := selfTest(ctx, &st, prof, opts, r); err != nil {
 		return st, err
 	}
 	return st, save()
+}
+
+// EnsureSidecar writes the embedded sidecar script to the cache if it
+// changed, so a ragalay update never runs an old script.
+func EnsureSidecar(cache string, st *State) error {
+	st.Sidecar = filepath.Join(cache, "py", "sidecar.py")
+	return writeIfChanged(st.Sidecar, sidecar.Script)
+}
+
+// AcceptLicense records that the user accepted a profile's license.
+func (s *State) AcceptLicense(profile string) {
+	ps := s.Profile(profile)
+	if ps.LicenseAccepted == "" {
+		ps.LicenseAccepted = time.Now().UTC().Format(time.RFC3339)
+	}
+	s.SetProfile(profile, ps)
+}
+
+func humanSize(n int64) string {
+	if n >= 1_000_000_000 {
+		return fmt.Sprintf("%.1f GB", float64(n)/1e9)
+	}
+	return fmt.Sprintf("%d MB", n/1_000_000)
 }
 
 func ensureUV(ctx context.Context, cache string, st *State, r Reporter) error {
@@ -224,6 +274,15 @@ func ensureVenv(ctx context.Context, cache string, st *State, variant string, lo
 	if st.Variant == v.Name && st.PackagesHash == packagesHash(v) && fileExists(st.Python) {
 		return nil
 	}
+	// Same torch build, newer library pins (e.g. transformers 5.19 for
+	// Gemma): update in place instead of downloading PyTorch again.
+	if st.Variant == v.Name && fileExists(st.Python) {
+		if err := installPackages(ctx, cache, st, log, r); err == nil {
+			st.PackagesHash = packagesHash(v)
+			return nil
+		}
+		r.Note("Updating the Python libraries failed; rebuilding the Python environment.")
+	}
 	if err := installVenv(ctx, cache, st, v, log, r); err != nil {
 		if v.Name == "cpu" {
 			return err
@@ -248,14 +307,7 @@ func installVenv(ctx context.Context, cache string, st *State, v Variant, log io
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("remove old Python environment: %w", err)
 	}
-	env := []string{
-		"UV_PYTHON_INSTALL_DIR=" + filepath.Join(cache, "python"),
-		"UV_NO_CONFIG=1",
-	}
-	// Keep uv's package cache with ours unless the user already has one.
-	if os.Getenv("UV_CACHE_DIR") == "" {
-		env = append(env, "UV_CACHE_DIR="+filepath.Join(cache, "uv-cache"))
-	}
+	env := uvEnv(cache)
 	r.Note("Creating Python " + pythonVersion + " environment")
 	if err := runCmd(ctx, log, env, st.UV, "venv", "--python", pythonVersion, "--python-preference", "only-managed", dir); err != nil {
 		return err
@@ -269,12 +321,30 @@ func installVenv(ctx context.Context, cache string, st *State, v Variant, log io
 	if err := runCmd(ctx, log, env, st.UV, append(args, v.Packages...)...); err != nil {
 		return err
 	}
-	r.Note("Installing model libraries")
-	if err := runCmd(ctx, log, env, st.UV, append([]string{"pip", "install", "--python", py}, pythonPackages...)...); err != nil {
+	st.Python = py
+	if err := installPackages(ctx, cache, st, log, r); err != nil {
 		return err
 	}
-	st.Python, st.Variant, st.PackagesHash = py, v.Name, packagesHash(v)
+	st.Variant, st.PackagesHash = v.Name, packagesHash(v)
 	return nil
+}
+
+// installPackages installs the pinned model libraries into st.Python.
+func installPackages(ctx context.Context, cache string, st *State, log io.Writer, r Reporter) error {
+	r.Note("Installing model libraries")
+	return runCmd(ctx, log, uvEnv(cache), st.UV, append([]string{"pip", "install", "--python", st.Python}, pythonPackages...)...)
+}
+
+func uvEnv(cache string) []string {
+	env := []string{
+		"UV_PYTHON_INSTALL_DIR=" + filepath.Join(cache, "python"),
+		"UV_NO_CONFIG=1",
+	}
+	// Keep uv's package cache with ours unless the user already has one.
+	if os.Getenv("UV_CACHE_DIR") == "" {
+		env = append(env, "UV_CACHE_DIR="+filepath.Join(cache, "uv-cache"))
+	}
+	return env
 }
 
 type accelerator struct {
@@ -302,12 +372,14 @@ else:
 	return a, err
 }
 
-func ensureIndexModel(ctx context.Context, st *State, opts Options, r Reporter) error {
-	want := opts.Model + "@" + opts.Revision
-	if st.IndexModel == want {
+func ensureIndexModel(ctx context.Context, st *State, prof embed.Profile, opts Options, r Reporter) error {
+	want := prof.IndexModel + "@" + prof.IndexRevision
+	ps := st.Profile(prof.Name)
+	if ps.IndexModel == want {
 		return nil
 	}
-	modelDir := "models--" + strings.ReplaceAll(opts.Model, "/", "--")
+	size := indexModelSizes[prof.Name]
+	modelDir := "models--" + strings.ReplaceAll(prof.IndexModel, "/", "--")
 	var watched string
 	stop := make(chan struct{})
 	defer close(stop)
@@ -323,18 +395,19 @@ func ensureIndexModel(ctx context.Context, st *State, opts Options, r Reporter) 
 				watched = filepath.Join(d, modelDir)
 			case <-t.C:
 				if watched != "" {
-					r.Progress(dirSize(watched), indexModelSize)
+					r.Progress(dirSize(watched), size)
 				}
 			}
 		}
 	}()
 	err := sidecar.Download(ctx, sidecar.Options{
-		Python: st.Python, ScriptPath: st.Sidecar, Model: opts.Model, Revision: opts.Revision, Log: opts.Log,
+		Python: st.Python, ScriptPath: st.Sidecar, Model: prof.IndexModel, Revision: prof.IndexRevision, Log: opts.Log,
 	}, func(d string) { dirs <- d })
 	if err != nil {
 		return err
 	}
-	st.IndexModel = want
+	ps.IndexModel = want
+	st.SetProfile(prof.Name, ps)
 	return nil
 }
 
@@ -371,9 +444,9 @@ func llamaLibName() string {
 	return "libllama.so"
 }
 
-// selfTest embeds a document, an image and a query with the omni sidecar,
-// embeds the same query with llama.cpp, and checks they agree (G2).
-func selfTest(ctx context.Context, st *State, opts Options, r Reporter) error {
+// selfTest embeds a document, an image and a query with the indexing
+// sidecar, embeds the same query with llama.cpp, and checks they agree (G2).
+func selfTest(ctx context.Context, st *State, prof embed.Profile, opts Options, r Reporter) error {
 	img, err := testImage()
 	if err != nil {
 		return err
@@ -383,7 +456,7 @@ func selfTest(ctx context.Context, st *State, opts Options, r Reporter) error {
 	r.Note("Loading the indexing model")
 	start := time.Now()
 	sc, err := sidecar.Start(ctx, sidecar.Options{
-		Python: st.Python, ScriptPath: st.Sidecar, Model: opts.Model, Revision: opts.Revision,
+		Python: st.Python, ScriptPath: st.Sidecar, Model: prof.IndexModel, Revision: prof.IndexRevision,
 		MaxSide: opts.MaxSide, Log: opts.Log,
 	})
 	if err != nil {
@@ -407,13 +480,14 @@ func selfTest(ctx context.Context, st *State, opts Options, r Reporter) error {
 	r.Note(fmt.Sprintf("Embedded a text and an image in %.2fs", time.Since(start).Seconds()))
 
 	const q = "how do I search my documents locally"
-	omniQ, err := sc.EmbedQuery(ctx, embed.Input{Modality: embed.Text, Text: q})
+	indexQ, err := sc.EmbedQuery(ctx, embed.Input{Modality: embed.Text, Text: q})
 	if err != nil {
-		return fmt.Errorf("self-test (omni query): %w", err)
+		return fmt.Errorf("self-test (indexing model query): %w", err)
 	}
 
 	start = time.Now()
-	lq, err := llama.Open(st.LlamaLib, st.QueryModel)
+	ps := st.Profile(prof.Name)
+	lq, err := llama.Open(st.LlamaLib, ps.QueryModel, llama.OptionsFor(prof))
 	if err != nil {
 		return fmt.Errorf("self-test (search model): %w", err)
 	}
@@ -424,7 +498,7 @@ func selfTest(ctx context.Context, st *State, opts Options, r Reporter) error {
 	}
 	r.Note(fmt.Sprintf("Search model loaded and embedded a query in %.2fs", time.Since(start).Seconds()))
 
-	a, err := embed.Fit(omniQ, info.Dim)
+	a, err := embed.Fit(indexQ, info.Dim)
 	if err != nil {
 		return err
 	}
@@ -437,8 +511,9 @@ func selfTest(ctx context.Context, st *State, opts Options, r Reporter) error {
 	if parity < MinParity {
 		return fmt.Errorf("self-test: search and indexing models disagree (cosine %.4f < %.2f)", parity, MinParity)
 	}
-	st.Device, st.DeviceName, st.SelfTestParity = info.Device, info.DeviceName, parity
-	st.SelfTestPassedAt = time.Now().UTC().Format(time.RFC3339)
+	st.Device, st.DeviceName = info.Device, info.DeviceName
+	ps.SelfTestParity, ps.SelfTestPassedAt = parity, time.Now().UTC().Format(time.RFC3339)
+	st.SetProfile(prof.Name, ps)
 	return nil
 }
 

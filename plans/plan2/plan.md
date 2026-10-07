@@ -279,11 +279,11 @@ ragalay model test [--json]                     # probe the active runtime / end
 - [x] Gemma 2 license: Apache 2.0 on the card, not gated
 - Exit: numbers recorded in §3.1. S7 met (parity and retrieval within 5 points), so P3 stands and Gemma is the default
 
-### Phase 1: Profiles and config
-- [ ] `embed.Profile` plus the registry (`embeddinggemma-2`, `jina-v5`, `openai`). Per-profile pins
-- [ ] Config `[embed] profile` and `[embed.openai]`, per-profile validation, migration of old keys and Jina folders (§5.2)
-- [ ] `embed_id` from the profile (Jina byte-identical). Dimension check from the profile. Remove Jina-only constants
-- [ ] License prompt per profile (only Jina needs acceptance)
+### Phase 1: Profiles and config ✅ Completed (2026-10-07)
+- [x] `embed.Profile` plus the registry (`embeddinggemma-2`, `jina-v5`, `openai`). Per-profile pins (`setup.queryModels`, `indexModelSizes`), llama.cpp b11459, yzma v1.29.0, transformers 5.19.0
+- [x] Config `[embed] profile` and `[embed.openai]`, per-profile validation, migration of old keys (§5.2). The meta-based fallback was dropped: every Plan 1 `config.toml` has `index_model`, so the key migration covers every Plan 1 folder
+- [x] `embed_id` from the profile (Jina byte-identical, tested). Dimension check from the profile. Removed the Jina-only constants (`supportedDims`, `llama.QueryPrefix`, `setup.QueryModelID`)
+- [x] License prompt per profile (only Jina needs acceptance; Gemma shows an Apache 2.0 note). `setup.State` keeps installs per profile and migrates Plan 1's `state.json`. `Ready` requires the pinned llama.cpp, so Plan 1 machines re-run setup once. Library-only pin changes upgrade the venv in place instead of re-downloading PyTorch
 - Exit: an existing Jina folder loads unchanged, with the same `embed_id` and no re-embed. A new folder gets Gemma 2 at 768. `go test ./...` passes
 
 ### Phase 2: Gemma 2 local profile

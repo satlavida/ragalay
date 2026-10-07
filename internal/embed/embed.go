@@ -1,6 +1,7 @@
-// Package embed defines what ragalay embeds and the vector helpers shared by
-// the indexing runtime (Python omni sidecar) and the query runtime
-// (llama.cpp text model). Both produce vectors in the same space.
+// Package embed defines what ragalay embeds, the embedding profiles, and the
+// vector helpers shared by the indexing runtime (Python sidecar or an
+// OpenAI-compatible service) and the query runtime (llama.cpp or the same
+// service). Both produce vectors in the same space.
 package embed
 
 import (
@@ -21,9 +22,10 @@ const (
 // Input is one thing to embed as a document.
 type Input struct {
 	Modality string `json:"modality"`
-	Text     string `json:"text,omitempty"` // text, or the caption for a combined text+image input
-	Path     string `json:"path,omitempty"` // image or PDF file
-	Page     int    `json:"page,omitempty"` // 0-based page for pdf_page
+	Text     string `json:"text,omitempty"`  // text, or the caption for a combined text+image input
+	Path     string `json:"path,omitempty"`  // image or PDF file
+	Page     int    `json:"page,omitempty"`  // 0-based page for pdf_page
+	Title    string `json:"title,omitempty"` // file name + heading path, for title prompts
 }
 
 // Indexer embeds documents (any modality). Used only while indexing.
@@ -38,9 +40,9 @@ type Querier interface {
 	Close() error
 }
 
-// ID names the vector space of an index. Documents embedded under a
-// different ID must be re-embedded (plan1 §4.6). The query model is not part
-// of it: it shares the space by construction.
+// ID names the vector space of a local profile's index. Documents embedded
+// under a different ID must be re-embedded (plan1 §4.6). The query model is
+// not part of it: it shares the space by construction.
 func ID(model, revision string, dim int) string {
 	if len(revision) > 7 {
 		revision = revision[:7]

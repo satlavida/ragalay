@@ -9,28 +9,18 @@ import (
 
 	"github.com/satlavida/ragalay/internal/config"
 	"github.com/satlavida/ragalay/internal/index"
-	"github.com/satlavida/ragalay/internal/llama"
 	"github.com/satlavida/ragalay/internal/search"
-	"github.com/satlavida/ragalay/internal/setup"
 )
 
-// newSearcher builds a Searcher for root. The query model (llama.cpp) is
-// loaded when installed; without it search falls back to keywords. The
+// newSearcher builds a Searcher for root. The profile's query model is
+// loaded when available; without it search falls back to keywords. The
 // Python sidecar is never involved.
 func newSearcher(root string, cfg config.Config) (*search.Searcher, func(), error) {
-	s := &search.Searcher{Root: root, Cfg: cfg, QueryModel: setup.QueryModelID}
-	closeFn := func() {}
-	cache, err := setup.CacheDir()
+	s := &search.Searcher{Root: root, Cfg: cfg}
+	q, id, err := newQuerier(cfg.Embed)
+	s.QueryModel = id
 	if err != nil {
-		return s, closeFn, nil
-	}
-	st, err := setup.LoadState(cache)
-	if err != nil || !st.QueryReady() {
-		return s, closeFn, nil
-	}
-	q, err := llama.Open(st.LlamaLib, st.QueryModel)
-	if err != nil {
-		return s, closeFn, nil // keyword fallback; Search reports it
+		return s, func() {}, nil // keyword fallback; Search reports it
 	}
 	s.Querier = q
 	return s, func() { q.Close() }, nil

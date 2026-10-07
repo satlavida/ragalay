@@ -12,18 +12,11 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/satlavida/ragalay/internal/chunk"
 	"github.com/satlavida/ragalay/internal/config"
 	"github.com/satlavida/ragalay/internal/index"
-	"github.com/satlavida/ragalay/internal/llama"
 	"github.com/satlavida/ragalay/internal/lock"
 	"github.com/satlavida/ragalay/internal/scan"
-	"github.com/satlavida/ragalay/internal/setup"
-	"github.com/satlavida/ragalay/internal/sidecar"
 )
-
-// errNotSetUp explains why indexing was skipped.
-var errNotSetUp = errors.New(`the AI models are not set up on this computer; run "ragalay setup" to index`)
 
 // indexQueue runs the indexing queue with the real models. The caller holds
 // the index lock. quiet suppresses progress output (JSON mode).
@@ -33,49 +26,18 @@ func (a *app) indexQueue(ctx context.Context, root string, cfg config.Config, qu
 
 // indexQueueWith is indexQueue with a progress callback (the TUI).
 func (a *app) indexQueueWith(ctx context.Context, root string, cfg config.Config, quiet bool, onProgress func(index.Progress)) (*index.Summary, error) {
-	cache, err := setup.CacheDir()
+	rt, err := newIndexRuntime(root, cfg.Embed)
 	if err != nil {
 		return nil, err
 	}
-	st, err := setup.LoadState(cache)
-	if err != nil {
-		return nil, err
-	}
-	if !st.Ready() {
-		return nil, errNotSetUp
-	}
+	defer rt.close()
 	logs := filepath.Join(root, config.DirName, config.LogsDir)
 	logFile, err := os.OpenFile(filepath.Join(logs, "index.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
 	}
 	defer logFile.Close()
-
-	// The query model's tokenizer counts tokens exactly like the indexing
-	// model (shared Qwen3 vocabulary).
-	var tok chunk.Tokenizer = chunk.Estimate{}
-	if lq, err := llama.Open(st.LlamaLib, st.QueryModel); err == nil {
-		defer lq.Close()
-		tok = lq
-	}
-	r := &index.Runner{
-		Root: root, Cfg: cfg, Tokenizer: tok, Log: logFile,
-		NewEmbedder: func(ctx context.Context) (index.Embedder, error) {
-			sideLog, err := os.OpenFile(filepath.Join(logs, "sidecar.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-			if err != nil {
-				return nil, err
-			}
-			c, err := sidecar.Start(ctx, sidecar.Options{
-				Python: st.Python, ScriptPath: st.Sidecar, Model: cfg.Embed.IndexModel,
-				Revision: cfg.Embed.IndexRevision, MaxSide: cfg.Embed.ImageMaxSide, Log: sideLog,
-			})
-			if err != nil {
-				sideLog.Close()
-				return nil, err
-			}
-			return &closingEmbedder{Client: c, log: sideLog}, nil
-		},
-	}
+	r := &index.Runner{Root: root, Cfg: cfg, Tokenizer: rt.tokenizer, Log: logFile, NewEmbedder: rt.newEmbedder}
 	var p *progressLine
 	if !quiet {
 		p = &progressLine{w: a.stdout, tty: isTerminal(a.stdout)}
@@ -93,17 +55,6 @@ func (a *app) indexQueueWith(ctx context.Context, root string, cfg config.Config
 		p.done(sum, err)
 	}
 	return &sum, err
-}
-
-type closingEmbedder struct {
-	*sidecar.Client
-	log io.Closer
-}
-
-func (c *closingEmbedder) Close() error {
-	err := c.Client.Close()
-	c.log.Close()
-	return err
 }
 
 func isTerminal(w io.Writer) bool {

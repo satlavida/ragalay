@@ -110,6 +110,7 @@ func indexedRoot(t *testing.T) (string, config.Config) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, config.DirName), 0o755)
 	cfg := config.Default()
+	cfg.Embed, _ = cfg.Embed.UseProfile(embed.JinaV5, 1024) // the fake embedders are 1024-dim
 	config.Save(root, cfg)
 	ctx := context.Background()
 	store.With(ctx, filepath.Join(root, config.DirName, config.DBFile), func(db *sql.DB) error { return store.Migrate(ctx, db, 1024) })
