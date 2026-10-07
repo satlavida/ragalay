@@ -263,7 +263,7 @@ func (c *Client) EmbedDocuments(ctx context.Context, in []embed.Input) ([][]floa
 	return decodeAll(res.Vectors)
 }
 
-// EmbedQuery embeds a query with the omni model. Search uses llama.cpp
+// EmbedQuery embeds a query with the indexing model. Search uses llama.cpp
 // instead; this exists for the setup self-test and query-by-example.
 func (c *Client) EmbedQuery(ctx context.Context, in embed.Input) ([]float32, error) {
 	var res struct {

@@ -1,4 +1,5 @@
-"""ragalay indexing sidecar: embeds documents with jina-embeddings-v5-omni.
+"""ragalay indexing sidecar: embeds documents with the folder's local profile
+(jina-embeddings-v5-omni or EmbeddingGemma 2).
 
 Embedded in the ragalay binary and written to the shared cache by
 `ragalay setup`. Speaks line-delimited JSON-RPC over stdin/stdout:
@@ -53,13 +54,25 @@ class Embedder:
                 device = "mps"
             else:
                 device = "cpu"
-        # The model's remote code forces bf16 regardless of the dtype argument,
-        # so cast after loading. bf16 is ~7x slower than fp32 on CPUs without
-        # bf16 support (plan1 §3.1).
-        dtype = {"cuda": torch.bfloat16, "mps": torch.float32, "cpu": torch.float32}[device]
-        self.model = SentenceTransformer(
-            model, trust_remote_code=True, device=device, revision=revision,
-            local_files_only=True).to(dtype)
+        self.gemma = "embeddinggemma" in model.lower()
+        if self.gemma:
+            # EmbeddingGemma 2 (plan2 §3.1): no remote code; bf16 or fp32,
+            # never fp16. The audio encoder is not loaded until audio is
+            # indexed (Plan 3); text vectors are identical without it.
+            bf16 = device == "cuda" and torch.cuda.is_bf16_supported()
+            dtype = torch.bfloat16 if bf16 else torch.float32
+            self.model = SentenceTransformer(
+                model, device=device, revision=revision, local_files_only=True,
+                model_kwargs={"dtype": dtype}, config_kwargs={"audio_config": None})
+            self.model.max_seq_length = 8192
+        else:
+            # Jina's remote code forces bf16 regardless of the dtype argument,
+            # so cast after loading. bf16 is ~7x slower than fp32 on CPUs
+            # without bf16 support (plan1 §3.1).
+            dtype = {"cuda": torch.bfloat16, "mps": torch.float32, "cpu": torch.float32}[device]
+            self.model = SentenceTransformer(
+                model, trust_remote_code=True, device=device, revision=revision,
+                local_files_only=True).to(dtype)
         self.device, self.dtype, self.max_side = device, str(dtype).replace("torch.", ""), max_side
         self.info = {
             "model": model, "revision": revision, "device": device, "dtype": self.dtype,
@@ -107,6 +120,8 @@ class Embedder:
             return self.bucket(im)
 
     def encode(self, items, query=False):
+        if self.gemma:
+            return [b64(v) for v in self.encode_gemma(items, query)]
         enc = self.model.encode_query if query else self.model.encode_document
         out = [None] * len(items)
         texts = [(i, it["text"]) for i, it in enumerate(items) if it["modality"] == "text"]
@@ -121,6 +136,36 @@ class Embedder:
             payload = (it["text"], img) if it.get("text") else img
             out[i] = enc([payload], normalize_embeddings=True)[0]
         return [b64(v) for v in out]
+
+    def encode_gemma(self, items, query):
+        """EmbeddingGemma's prompts: "task: search result | query: " for
+        queries, "title: {title} | text: " for documents, where the title is
+        the file name and heading path (plan2 S9). Images go in as interleaved
+        input with an <|image|> placeholder, after the caption if any."""
+        out = [None] * len(items)
+        texts = [(i, it) for i, it in enumerate(items) if it["modality"] == "text"]
+        if query:
+            vecs = self.model.encode_query([it["text"] for _, it in texts], batch_size=8, normalize_embeddings=True)
+            for (i, _), v in zip(texts, vecs):
+                out[i] = v
+        else:
+            by_title = {}
+            for i, it in texts:
+                by_title.setdefault(it.get("title") or "none", []).append((i, it["text"]))
+            for title, group in by_title.items():
+                vecs = self.model.encode([t for _, t in group], prompt=f"title: {title} | text: ",
+                                         batch_size=8, normalize_embeddings=True)
+                for (i, _), v in zip(group, vecs):
+                    out[i] = v
+        for i, it in enumerate(items):
+            if it["modality"] == "text":
+                continue
+            img = self.load_image(it)
+            caption = (it.get("text") or "").strip()
+            prefix = "task: search result | query: " if query else f"title: {it.get('title') or 'none'} | text: "
+            text = prefix + (caption + " " if caption else "") + "<|image|>"
+            out[i] = self.model.encode([{"text": text, "image": [img]}], normalize_embeddings=True)[0]
+        return out
 
 
 def b64(v):

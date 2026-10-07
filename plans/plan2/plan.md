@@ -286,10 +286,11 @@ ragalay model test [--json]                     # probe the active runtime / end
 - [x] License prompt per profile (only Jina needs acceptance; Gemma shows an Apache 2.0 note). `setup.State` keeps installs per profile and migrates Plan 1's `state.json`. `Ready` requires the pinned llama.cpp, so Plan 1 machines re-run setup once. Library-only pin changes upgrade the venv in place instead of re-downloading PyTorch
 - Exit: an existing Jina folder loads unchanged, with the same `embed_id` and no re-embed. A new folder gets Gemma 2 at 768. `go test ./...` passes
 
-### Phase 2: Gemma 2 local profile
-- [ ] Sidecar adapters (Gemma, Jina), dtype rules, prompts on both sides
-- [ ] Setup installs the active profile only. llama.cpp pin bump if needed
-- [ ] `TestBothRuntimesOnThisMachine` runs per installed profile (skipped without setup)
+### Phase 2: Gemma 2 local profile ✅ Completed (2026-10-07)
+- [x] Sidecar adapters (Gemma, Jina), dtype rules (Gemma: bf16 on GPUs that support it, else fp32; never fp16), prompts on both sides, title = file name + heading path, images as interleaved `<|image|>` input
+- [x] Setup installs the active profile only. llama.cpp pin bumped to b11459 (Phase 1). Real run on Windows/ROCm: library upgrade in place, self-test parity **0.9999**
+- [x] `TestBothRuntimesOnThisMachine` runs per installed profile (skipped without setup). Both pass on this machine: Gemma query vs attention text 0.868 / bread 0.559, Jina 0.853 / 0.045. `TestDoubleClickToSearch` passes on the Gemma default
+- Exit check: a Gemma folder indexed MD + PDF + linked image (71 chunks, 26 s), and searches found the right page, note, and image with llama.cpp only
 - Exit: a Gemma folder indexes MD, PDF, and images. Search parity is at or above the Phase 0 threshold, and search uses no Python
 
 ### Phase 3: Shadow build
