@@ -42,10 +42,13 @@ func (e *exitError) Unwrap() error { return e.err }
 
 type app struct {
 	rootFlag string
-	stdin    io.Reader
-	stdout   io.Writer
-	stderr   io.Writer
-	isTTY    func() bool // nil: check os.Stdin
+	// yes allows sending documents to the folder's embedding service without
+	// asking (--yes on scan and reembed; plan2 S10).
+	yes    bool
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
+	isTTY  func() bool // nil: check os.Stdin
 }
 
 // Execute runs the CLI with os.Args and returns the process exit code.

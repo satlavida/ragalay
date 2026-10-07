@@ -304,13 +304,20 @@ ragalay model test [--json]                     # probe the active runtime / end
   - Plan 1 indexes don't record their settings. `index.LiveEmbed` infers a local profile from its `embed_id`, so search keeps its vectors during a switch, and setup now records `embed_config`.
 - **Behavior change (plan1 §4.7):** `search` no longer exits 2 on a model mismatch. It keeps using the live index's model and adds a notice (and `--mode vector` with an unknown live model fails with `ErrOtherSpace`). `scan` and `reembed` still exit 2 on a mismatch.
 
-### Phase 4: OpenAI-compatible client
-- [ ] `internal/embed/openai`: batching, retries, base64/float, normalize, `dimensions`, `matryoshka`, `extra_body`, timeouts
-- [ ] Image extensions `jina` and `vllm`. Go-side image loading. PDF pages are text only (S12). `none` means keyword-only images
-- [ ] Search through the HTTP querier, with keyword fallback on failure or timeout
-- [ ] Consent recorded per host per folder (S10), `concurrency` (S16), `--yes`, warning for `http://` to a non-loopback host, no secrets in logs
-- [ ] `httptest` tests: batching, 429 retry, wrong dim, unnormalized vectors, timeout fallback, both image request shapes
-- Exit: a folder indexes and searches end to end against local Ollama (text) and a vLLM or Jina-API-style mock (images), with no Python and no downloads
+### Phase 4: OpenAI-compatible client ✅ Completed (2026-10-07)
+- [x] `internal/embed/openai`, plain `net/http`:
+  - batching and `concurrency`, results reordered by index
+  - retries for 429/5xx/timeouts with `Retry-After`; refused connections and unknown hosts fail at once with "is the embedding server running?" (Windows reports refusals differently, so any failed dial counts)
+  - base64 with a float fallback
+  - `dimensions`; without `matryoshka`, a wrong vector size is an error that names the right `dim`
+  - `query_extra` / `document_extra`, input clipping under `max_input_tokens`, per-request and query timeouts
+  - the key only in the `Authorization` header and redacted from errors
+- [x] Image extensions `jina`, `vllm`, `llamacpp` (media marker from `/props`). Go-side image loading with `golang.org/x/image` (PNG, JPEG, GIF, WebP, BMP, TIFF; CatmullRom scaling to `image_max_side`). PDF page images are dropped for services (S12). With `none`, images stay keyword-only: no vector, file name as text when there is no caption
+- [x] Search through the HTTP querier. A failure or `query_timeout` falls back to keywords (existing search fallback)
+- [x] Consent recorded per host per folder (meta `consent_upload:<host>`), asked once with document, token, and image counts (S17). `--yes` on `scan` and `reembed`; without a terminal the command explains `--yes`. Warning for `http://` to another computer
+- [x] Tests: `httptest` server for batching and order, base64 rejection → floats, 429 retries, wrong count, refused connection, concurrency cap, query timeout, clipping, all three image shapes, image scaling. CLI tests for consent and a full local-service run with an empty model cache
+- Exit check (real servers, Windows): with an empty model cache, a folder indexed and searched through Ollama 0.20.7 (`nomic-embed-text`, text, image keyword-only by file name), and another through llama-server b11459 with Gemma + mmproj (`llamacpp` image mode: vector search found `IMG_0042.jpg` for "a red sports car"). No Python, nothing downloaded
+- Also fixed: changing the model between `init` and the first scan no longer reports a mismatch. An index with no chunks adopts the new settings
 
 ### Phase 5: CLI, TUI, MCP
 - [ ] `ragalay model list|show|use|test` with `--json`. `ragalay setup --prune`

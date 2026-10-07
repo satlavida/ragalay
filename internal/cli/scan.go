@@ -106,6 +106,7 @@ Only one ragalay process can scan or index a folder at a time.`,
 	cmd.Flags().BoolVar(&watch, "watch", false, "keep running and rescan when files change")
 	cmd.Flags().BoolVar(&noIndex, "no-index", false, "only update the document list, do not embed")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output (one JSON object per scan with --watch)")
+	cmd.Flags().BoolVar(&a.yes, "yes", false, "allow sending documents to the folder's embedding service without asking")
 	return cmd
 }
 

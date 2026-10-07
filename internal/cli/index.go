@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -31,6 +32,12 @@ func (a *app) indexQueueWith(ctx context.Context, root string, cfg config.Config
 		return nil, err
 	}
 	defer rt.close()
+	if err := a.checkUploadConsent(ctx, root, cfg.Embed, quiet); err != nil {
+		return nil, err
+	}
+	if o := cfg.Embed.OpenAI; cfg.Embed.Remote() && strings.HasPrefix(o.BaseURL, "http://") && !quiet {
+		fmt.Fprintf(a.stderr, "warning: %s is reached over plain http: your documents and API key are not encrypted on the way\n", o.Host())
+	}
 	logs := filepath.Join(root, config.DirName, config.LogsDir)
 	logFile, err := os.OpenFile(filepath.Join(logs, "index.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -189,6 +196,7 @@ func (a *app) reembedCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "rebuild even if the settings did not change, and skip the free-space check")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")
+	cmd.Flags().BoolVar(&a.yes, "yes", false, "allow sending documents to the folder's embedding service without asking")
 	return cmd
 }
 

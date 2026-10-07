@@ -9,8 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/satlavida/ragalay/internal/chunk"
@@ -58,6 +61,20 @@ func CheckSpace(ctx context.Context, root string, cfg config.Config) error {
 			return store.Tx(ctx, db, func(tx *sql.Tx) error {
 				return store.SetLiveSpace(ctx, tx, want, dim, EmbedJSON(cfg.Embed))
 			})
+		}
+		if have == "" {
+			// Nothing was ever embedded (the model changed between init and
+			// the first scan): recreate the empty tables at the new size.
+			var chunks int
+			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM chunks`).Scan(&chunks); err != nil {
+				return err
+			}
+			if chunks == 0 {
+				return store.Tx(ctx, db, func(tx *sql.Tx) error {
+					_, err := store.ResetForReembed(ctx, tx, want, cfg.Embed.Dim, EmbedJSON(cfg.Embed))
+					return err
+				})
+			}
 		}
 		if have != want && next != want {
 			var n int
@@ -289,12 +306,39 @@ func (r *Runner) embed(ctx context.Context, emb Embedder, docPath string, units 
 	if batch <= 0 {
 		batch = 16
 	}
+	// Units the model cannot embed (plan2 §5.4): page images are dropped
+	// (the page text is indexed), other images stay keyword-only.
+	can := r.Cfg.Embed.Modalities()
+	var keep []extract.Unit
+	for _, u := range units {
+		if u.Modality == embed.PDFPage && !slices.Contains(can, embed.PDFPage) {
+			continue
+		}
+		keep = append(keep, u)
+	}
+	units = keep
 	rows := make([]store.ChunkRow, len(units))
-	for i := 0; i < len(units); i += batch {
-		end := min(i+batch, len(units))
-		in := make([]embed.Input, end-i)
-		for j, u := range units[i:end] {
-			in[j] = u.Input(r.Root, docPath)
+	for i, u := range units {
+		rows[i] = store.ChunkRow{Modality: u.Modality, Text: u.Text, HeadingPath: u.HeadingPath, Page: u.Page, Tokens: u.Tokens}
+		if u.Modality == embed.Image {
+			rows[i].SourcePath = u.Source
+			if rows[i].Text == "" {
+				// Keyword search can still find an image by its name.
+				rows[i].Text = strings.NewReplacer("-", " ", "_", " ").Replace(strings.TrimSuffix(path.Base(u.Source), path.Ext(u.Source)))
+			}
+		}
+	}
+	var todo []int
+	for i, u := range units {
+		if slices.Contains(can, u.Modality) {
+			todo = append(todo, i)
+		}
+	}
+	for b := 0; b < len(todo); b += batch {
+		idx := todo[b:min(b+batch, len(todo))]
+		in := make([]embed.Input, len(idx))
+		for j, i := range idx {
+			in[j] = units[i].Input(r.Root, docPath)
 		}
 		vecs, err := emb.EmbedDocuments(ctx, in)
 		if err != nil {
@@ -308,13 +352,7 @@ func (r *Runner) embed(ctx context.Context, emb Embedder, docPath string, units 
 			if err != nil {
 				return nil, err
 			}
-			u := units[i+j]
-			row := store.ChunkRow{Modality: u.Modality, Text: u.Text, HeadingPath: u.HeadingPath, Page: u.Page,
-				Tokens: u.Tokens, Vector: fit}
-			if u.Modality == embed.Image {
-				row.SourcePath = u.Source
-			}
-			rows[i+j] = row
+			rows[idx[j]].Vector = fit
 		}
 	}
 	return rows, nil

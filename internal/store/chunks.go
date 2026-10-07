@@ -44,7 +44,9 @@ func ReplaceChunks(ctx context.Context, tx *sql.Tx, docID int64, rows []ChunkRow
 		return err
 	}
 	for i, r := range rows {
-		if len(r.Vector) != t.Dim {
+		// A chunk without a vector is keyword-only (an image the model
+		// cannot embed, plan2 §5.4).
+		if r.Vector != nil && len(r.Vector) != t.Dim {
 			return fmt.Errorf("chunk %d has a %d-dimension vector, the index uses %d", i, len(r.Vector), t.Dim)
 		}
 	}
@@ -65,15 +67,18 @@ func ReplaceChunks(ctx context.Context, tx *sql.Tx, docID int64, rows []ChunkRow
 		for _, c := range tf {
 			n += c
 		}
-		var page, source any
+		var page, source, vector any
 		if r.Page > 0 {
 			page = r.Page
 		}
 		if r.SourcePath != "" {
 			source = r.SourcePath
 		}
+		if r.Vector != nil {
+			vector = embed.Blob(r.Vector)
+		}
 		res, err := ins.ExecContext(ctx, docID, ord, r.Modality, r.Text, r.HeadingPath, page, r.Tokens,
-			embed.Blob(r.Vector), source, n)
+			vector, source, n)
 		if err != nil {
 			return err
 		}
