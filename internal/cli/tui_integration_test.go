@@ -86,6 +86,10 @@ func TestDoubleClickToSearch(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, ".ragalay", "config.toml")); err != nil {
 		t.Fatalf("folder not initialised: %v\n%s", err, m.View())
 	}
+	if !strings.Contains(m.View(), "Which AI model") {
+		t.Fatalf("model step:\n%s", m.View())
+	}
+	m = driveFor(m, quick, tea.KeyMsg{Type: tea.KeyEnter}) // the preselected default
 
 	// Background indexing runs in the real watcher; wait for it.
 	deadline := time.Now().Add(4 * time.Minute)

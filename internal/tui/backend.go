@@ -35,6 +35,55 @@ type Backend interface {
 	Open(path string) error
 	// CheckUpdate returns a newer released version, or "".
 	CheckUpdate(ctx context.Context) (string, error)
+
+	// Models lists the models the folder can use (Model view, wizard).
+	Models(ctx context.Context) (Models, error)
+	// PlanModel says what switching to a model involves.
+	PlanModel(ctx context.Context, c ModelChoice) (ModelPlan, error)
+	// UseModel saves the folder's model. allowUpload records consent to
+	// send documents to a service on another computer (plan2 S10). The
+	// rebuild then runs through Reembed.
+	UseModel(ctx context.Context, c ModelChoice, allowUpload bool) error
+	// TestModel checks that a model answers and says how.
+	TestModel(ctx context.Context, c ModelChoice) (string, error)
+	// SetUserEnv stores an environment variable for this user (Windows,
+	// plan2 S11).
+	SetUserEnv(name, value string) error
+}
+
+// Models is the Model view's data.
+type Models struct {
+	Options   []ModelOption
+	Service   Service // the service settings (current or defaults)
+	CanSetEnv bool    // SetUserEnv works on this OS
+	KeyHelp   string  // how to set the API key variable by hand
+}
+
+// ModelOption is one model choice.
+type ModelOption struct {
+	Name, Title, Pitch, License string
+	Local, Installed, Active    bool
+}
+
+// Service is an OpenAI-compatible embedding service.
+type Service struct {
+	BaseURL, Model, KeyEnv, ImageInput string
+	KeySet                             bool // the key variable is set
+}
+
+// ModelChoice is what the user picked.
+type ModelChoice struct {
+	Profile string
+	Service Service // for the "openai" profile
+}
+
+// ModelPlan is what a switch involves.
+type ModelPlan struct {
+	NeedSetup bool   // models to download first
+	License   string // shown before setup
+	Remote    bool   // documents leave this computer
+	Host      string
+	Documents int
 }
 
 // FirstRun describes the wizard's work.

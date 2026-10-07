@@ -36,6 +36,8 @@ type StatusReport struct {
 	// ModelSwitch is a model switch in progress: search uses the previous
 	// model until it finishes (plan2 S1).
 	ModelSwitch *store.Shadow `json:"model_switch"`
+	// Embed is the model the settings name (plan2 §5.8).
+	Embed EmbedInfo `json:"embed"`
 }
 
 // Mismatch names both vector spaces.
@@ -86,6 +88,7 @@ func statusReport(ctx context.Context, root string) (StatusReport, error) {
 		return StatusReport{}, err
 	}
 	rep := StatusReport{Root: root, Version: Version, ConfigErrors: []string{}, WholeDir: len(cfg.Scan.Folders) == 0}
+	rep.Embed = embedInfo(cfg.Embed)
 	if verr := cfg.Validate(); verr != nil {
 		rep.ConfigErrors = splitErrors(verr)
 	}
@@ -183,10 +186,18 @@ func (a *app) printStatus(r StatusReport) {
 		fmt.Fprintf(w, "Indexing:  running (%q, pid %d, since %s)\n", r.Indexing.Command, r.Indexing.PID,
 			r.Indexing.Started.Local().Format("15:04:05"))
 	}
-	if r.SetupComplete {
-		fmt.Fprintf(w, "\nModels:    ready (indexing on %s)\n", r.Setup.DeviceName)
-	} else {
-		fmt.Fprintln(w, "\nModels:    not set up yet. Run \"ragalay setup\".")
+	e := r.Embed
+	switch {
+	case e.EndpointHost != "":
+		where := "on this computer"
+		if e.Remote {
+			where = "on another computer"
+		}
+		fmt.Fprintf(w, "\nModel:     %s at %s (%s)\n", e.Model, e.EndpointHost, where)
+	case r.SetupComplete:
+		fmt.Fprintf(w, "\nModel:     %s, ready (indexing on %s)\n", e.Title, r.Setup.DeviceName)
+	default:
+		fmt.Fprintf(w, "\nModel:     %s, not set up yet. Run \"ragalay setup\".\n", e.Title)
 	}
 }
 

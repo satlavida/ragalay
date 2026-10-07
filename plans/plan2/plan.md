@@ -319,11 +319,21 @@ ragalay model test [--json]                     # probe the active runtime / end
 - Exit check (real servers, Windows): with an empty model cache, a folder indexed and searched through Ollama 0.20.7 (`nomic-embed-text`, text, image keyword-only by file name), and another through llama-server b11459 with Gemma + mmproj (`llamacpp` image mode: vector search found `IMG_0042.jpg` for "a red sports car"). No Python, nothing downloaded
 - Also fixed: changing the model between `init` and the first scan no longer reports a mismatch. An index with no chunks adopts the new settings
 
-### Phase 5: CLI, TUI, MCP
-- [ ] `ragalay model list|show|use|test` with `--json`. `ragalay setup --prune`
-- [ ] TUI Model view (key help, Windows env-var offer) and the wizard model step. Re-embed banner and flow reused
-- [ ] `status --json` and MCP `status` report the embed profile, whether it's remote, and the image mode
-- Exit: switching Gemma → Ollama → Jina → Gemma works from both the CLI and the TUI, each switch re-embedding with a correct ETA while search stays complete
+### Phase 5: CLI, TUI, MCP ✅ Completed (2026-10-07)
+- [x] `ragalay model list|show|use|test` with `--json`:
+  - `model use` installs a local model if needed (shared `installModels` with `setup`).
+  - For a service it probes before changing anything and takes the vector size from the answer unless `--dim` is given.
+  - It then scans and runs the switch. `--no-index`, `--force`, `--yes`, and `--accept-license` are supported.
+- [x] `ragalay setup --prune` lists models with their real sizes, and `--remove <name>` deletes them. The Hugging Face side goes through `huggingface_hub` (`sidecar.py cache-size|cache-delete`): v1.x shares blobs between files, so a folder walk can't measure or delete a model correctly. On this machine: Gemma 1.7 GiB, Jina 3.5 GiB. Removal was not run here, since it would delete the user's models.
+- [x] TUI:
+  - A **Model** tab with a choice list (current model marked, "downloads first" hints).
+  - A service form: address, model, key variable name, image mode.
+  - Ctrl+K stores the API key as a Windows user environment variable (`HKCU\Environment` plus a `WM_SETTINGCHANGE` broadcast, S11). Other OSes show `export` help.
+  - A confirmation that states the document count, any download, and any upload to another computer. Confirming records consent.
+  - A wizard model step after the folder choice, with Gemma preselected (S18). Models that aren't installed go through the license, download, and install screens, then the switch starts by itself.
+- [x] `status --json` (and MCP `status`, the same report) has `embed: {profile, title, model, dim, embed_id, endpoint_host, remote, modalities, image_mode, api_key_env, api_key_set, license}`. The text status shows the model and where it runs. MCP has no tool that changes the model (S5)
+- [x] Tests: TUI with a fake backend (wizard model step; switch to a remote service with key entry, consent, and rebuild; install-then-switch; broken service). Real TUI backend switching Jina → Gemma with the real models (18 s switch, search working before and after). Real double-click test with the new model step (30 s)
+- Exit check (real models and Ollama, Windows): `model use` from Gemma → Ollama (`nomic-embed-text`) → Jina → Gemma. Each step probed or installed as needed, queued the documents, showed ETA progress, finished the switch, and searched correctly afterwards. Search stayed complete during each switch (Phase 3)
 
 ### Phase 6: Docs and release
 - [ ] README: "Use a different model" (non-technical first), per-profile licenses, privacy note

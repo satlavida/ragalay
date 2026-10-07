@@ -202,15 +202,34 @@ def serve(args):
             send({"id": req.get("id"), "error": {"message": f"{type(e).__name__}: {e}"}})
 
 
+def cache(args):
+    """Size of a model in the Hugging Face cache, or remove it. The cache
+    shares blobs between files, so only huggingface_hub can measure and
+    delete a model correctly (`ragalay setup --prune`)."""
+    from huggingface_hub import scan_cache_dir
+
+    info = scan_cache_dir()
+    repo = next((r for r in info.repos if r.repo_id == args.model and r.repo_type == "model"), None)
+    if repo is None:
+        send({"bytes": 0})
+        return
+    if args.command == "cache-delete":
+        info.delete_revisions(*[r.commit_hash for r in repo.revisions]).execute()
+    send({"bytes": repo.size_on_disk})
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("command", choices=["serve", "download"])
+    p.add_argument("command", choices=["serve", "download", "cache-size", "cache-delete"])
     p.add_argument("--model", required=True)
-    p.add_argument("--revision", required=True)
+    p.add_argument("--revision", default="")
     p.add_argument("--device", default="auto")
     p.add_argument("--max-side", type=int, default=1024)
     args = p.parse_args()
     try:
+        if args.command.startswith("cache-"):
+            cache(args)
+            return
         (serve if args.command == "serve" else download)(args)
     except Exception as e:  # noqa: BLE001
         traceback.print_exc()

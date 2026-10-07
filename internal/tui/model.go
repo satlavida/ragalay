@@ -20,6 +20,7 @@ const (
 	scrLoading screen = iota
 	scrWelcome
 	scrFolders
+	scrModel // wizard: which model (plan2 S18)
 	scrLicense
 	scrPlan
 	scrInstall
@@ -32,9 +33,10 @@ const (
 	tabSearch tab = iota
 	tabStatus
 	tabFolders
+	tabModel
 )
 
-var tabNames = []string{"Search", "Status", "Folders"}
+var tabNames = []string{"Search", "Status", "Folders", "Model"}
 
 // Model is the Bubble Tea model.
 type Model struct {
@@ -80,6 +82,18 @@ type Model struct {
 	folderIn   textinput.Model
 	folderOn   bool
 	message    string
+
+	// model choice (Model view and wizard)
+	models      Models
+	modelSel    int
+	form        svcForm
+	formOn      bool
+	keyIn       textinput.Model
+	keyOn       bool
+	confirmSw   *pendingSwitch
+	busy        string
+	modelNote   string
+	switchAfter bool // start the rebuild once the main view knows the index's state
 }
 
 // New returns the model; Run starts it.
@@ -92,7 +106,10 @@ func New(b Backend) Model {
 	fi := textinput.New()
 	fi.Placeholder = "folder to add, e.g. notes"
 	fi.Prompt = "+ "
-	return Model{b: b, ctx: ctx, cancel: cancel, input: in, folderIn: fi,
+	ki := textinput.New()
+	ki.Prompt = "API key:   "
+	ki.EchoMode = textinput.EchoPassword
+	return Model{b: b, ctx: ctx, cancel: cancel, input: in, folderIn: fi, keyIn: ki,
 		bar: progress.New(progress.WithDefaultGradient()), events: make(chan WatchEvent, 64)}
 }
 
@@ -189,7 +206,7 @@ func (m *Model) enterMain() tea.Cmd {
 	m.screen = scrMain
 	m.inputOn = true
 	m.input.Focus()
-	return tea.Batch(m.cmdStatus(), m.startWatch(), m.waitEvent(), tick(), textinput.Blink,
+	return tea.Batch(m.cmdStatus(), m.cmdModels(), m.startWatch(), m.waitEvent(), tick(), textinput.Blink,
 		func() tea.Msg {
 			v, _ := m.b.CheckUpdate(m.ctx)
 			return updateMsg(v)
@@ -220,6 +237,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // ---- wizard ----
 
 func (m Model) updateWizard(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if mm, cmd, ok := m.modelMsgs(msg); ok {
+		return mm, cmd
+	}
 	switch msg := msg.(type) {
 	case firstRunMsg:
 		if msg.err != nil {
@@ -231,7 +251,9 @@ func (m Model) updateWizard(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.fr.NeedInit:
 			m.screen = scrWelcome
 		case msg.fr.NeedSetup:
-			m.screen = scrLicense
+			m.screen = scrModel
+			m.choices = make([]bool, len(msg.fr.Subfolders)+1)
+			return m, m.cmdModels()
 		default:
 			cmd := m.enterMain()
 			return m, cmd
@@ -244,12 +266,9 @@ func (m Model) updateWizard(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
-		if m.first.NeedSetup {
-			m.screen = scrLicense
-			return m, nil
-		}
-		cmd := m.enterMain()
-		return m, cmd
+		// A new folder chooses its model (plan2 S18).
+		m.screen = scrModel
+		return m, m.cmdModels()
 	case planMsg:
 		if msg.err != nil {
 			m.err = msg.err
@@ -317,6 +336,14 @@ func (m Model) wizardKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch m.screen {
+	case scrModel:
+		if mm, cmd, ok := m.modelKey(k); ok {
+			return mm, cmd
+		}
+		if key == "q" || key == "esc" {
+			m.cancel()
+			return m, tea.Quit
+		}
 	case scrWelcome:
 		switch key {
 		case "enter":
@@ -399,10 +426,22 @@ func (m Model) cmdInit(folders []string) tea.Cmd {
 // ---- main ----
 
 func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if mm, cmd, ok := m.modelMsgs(msg); ok {
+		return mm, cmd
+	}
 	switch msg := msg.(type) {
 	case statusMsg:
 		if msg.err == nil {
 			m.status = msg.s
+		}
+		// A model chosen in the wizard (or before its download) starts
+		// its switch once the index's state is known.
+		if m.switchAfter {
+			m.switchAfter = false
+			if m.status.Mismatch != "" && !m.reembeding && !m.reembedReq {
+				m.message = "Switching models…"
+				return m, m.beginReembed()
+			}
 		}
 		return m, nil
 	case tickMsg:
@@ -449,7 +488,7 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = "Index rebuilt."
 		}
 		cmd := m.startWatch()
-		return m, tea.Batch(m.cmdStatus(), cmd)
+		return m, tea.Batch(m.cmdStatus(), m.cmdModels(), cmd)
 	case searchMsg:
 		if msg.q != m.lastQuery {
 			return m, nil // a newer search is running
@@ -482,7 +521,24 @@ func (m Model) updateMain(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.folderOn {
 		m.folderIn, cmd = m.folderIn.Update(msg)
 	}
+	if m.keyOn {
+		m.keyIn, cmd = m.keyIn.Update(msg)
+	} else if m.formOn && m.form.focus < 3 {
+		m.form.fields[m.form.focus], cmd = m.form.fields[m.form.focus].Update(msg)
+	}
 	return m, cmd
+}
+
+// beginReembed stops background indexing and runs the rebuild (R, or a
+// model switch).
+func (m *Model) beginReembed() tea.Cmd {
+	m.reembedReq = true
+	if m.watching {
+		m.watchStop()
+		return nil
+	}
+	gen := m.watchGen
+	return func() tea.Msg { return watchDoneMsg{gen: gen} }
 }
 
 func (m Model) mainKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -517,6 +573,11 @@ func (m Model) mainKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input, cmd = m.input.Update(k)
 		return m, cmd
 	}
+	if m.tab == tabModel {
+		if mm, cmd, ok := m.modelKey(k); ok {
+			return mm, cmd
+		}
+	}
 	if m.folderOn {
 		switch key {
 		case "enter":
@@ -546,15 +607,15 @@ func (m Model) mainKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cancel()
 		return m, tea.Quit
 	case "tab":
-		m.tab = (m.tab + 1) % 3
+		m.tab = (m.tab + 1) % tab(len(tabNames))
 		if m.tab == tabSearch {
 			m.inputOn = true
 			m.input.Focus()
 		}
-		return m, m.cmdStatus()
+		return m, tea.Batch(m.cmdStatus(), m.cmdModels())
 	case "shift+tab":
-		m.tab = (m.tab + 2) % 3
-		return m, m.cmdStatus()
+		m.tab = (m.tab + tab(len(tabNames)) - 1) % tab(len(tabNames))
+		return m, tea.Batch(m.cmdStatus(), m.cmdModels())
 	case "/", "s":
 		m.tab, m.inputOn = tabSearch, true
 		m.input.Focus()
@@ -573,13 +634,8 @@ func (m Model) mainKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case "R":
 		if m.status.Mismatch != "" && !m.reembeding {
-			m.reembedReq = true
 			m.message = "Rebuilding the index…"
-			if m.watching {
-				m.watchStop()
-				return m, nil
-			}
-			return m, func() tea.Msg { return watchDoneMsg{gen: m.watchGen} }
+			return m, m.beginReembed()
 		}
 	}
 	switch m.tab {
@@ -674,6 +730,8 @@ func (m Model) View() string {
 		return m.viewWelcome()
 	case scrFolders:
 		return m.viewFolders()
+	case scrModel:
+		return m.viewWizardModel()
 	case scrLicense:
 		return m.viewLicense()
 	case scrPlan:
@@ -712,6 +770,15 @@ func (m Model) viewFolders() string {
 		b.WriteString("  " + line + "\n")
 	}
 	b.WriteString("\n" + dim.Render("  ↑/↓: move    space: select    Enter: done    You can change this later."))
+	return b.String()
+}
+
+func (m Model) viewWizardModel() string {
+	var b strings.Builder
+	b.WriteString("\n  " + title.Render("Which AI model should ragalay use?") + "\n\n")
+	b.WriteString(dim.Render("  You can change this later in the Model view.") + "\n\n")
+	b.WriteString(m.viewModels())
+	b.WriteString("\n" + dim.Render("  "+strings.Replace(m.modelHelp(), "Tab: next view   ", "", 1)))
 	return b.String()
 }
 
@@ -794,6 +861,8 @@ func (m Model) viewMain() string {
 		b.WriteString(m.viewStatus())
 	case tabFolders:
 		b.WriteString(m.viewFoldersTab())
+	case tabModel:
+		b.WriteString(m.viewModels())
 	}
 	b.WriteString("\n" + dim.Render(m.help()))
 	return b.String()
@@ -933,6 +1002,8 @@ func (m Model) viewFoldersTab() string {
 
 func (m Model) help() string {
 	switch {
+	case m.tab == tabModel:
+		return m.modelHelp()
 	case m.tab == tabSearch && m.inputOn:
 		return "Enter: search   ↓/Esc: results   Tab: next view   Ctrl+C: quit"
 	case m.tab == tabSearch:

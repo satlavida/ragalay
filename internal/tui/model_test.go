@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,11 @@ type fakeBackend struct {
 	removed   []string
 	mismatch  string
 	setupDone bool
+	docs      int
+	profile   string
+	used      []ModelChoice
+	allowed   bool
+	env       string
 }
 
 func (f *fakeBackend) FirstRun(context.Context) (FirstRun, error) { return f.first, nil }
@@ -90,6 +96,61 @@ func (f *fakeBackend) Open(p string) error {
 	return nil
 }
 func (f *fakeBackend) CheckUpdate(context.Context) (string, error) { return "v1.2.0", nil }
+
+func (f *fakeBackend) Models(context.Context) (Models, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	active := f.profile
+	if active == "" {
+		active = "embeddinggemma-2"
+	}
+	opts := []ModelOption{
+		{Name: "embeddinggemma-2", Title: "EmbeddingGemma 2", Pitch: "recommended", Local: true, Installed: true},
+		{Name: "jina-v5", Title: "Jina v5", Pitch: "non-commercial", Local: true},
+		{Name: "openai", Title: "Another service (OpenAI-compatible)", Pitch: "Ollama, ..."},
+	}
+	for i := range opts {
+		opts[i].Active = opts[i].Name == active
+	}
+	return Models{Options: opts, Service: Service{BaseURL: "http://localhost:11434/v1", Model: "nomic-embed-text", ImageInput: "none"},
+		CanSetEnv: true, KeyHelp: "setx NAME value"}, nil
+}
+func (f *fakeBackend) PlanModel(_ context.Context, c ModelChoice) (ModelPlan, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p := ModelPlan{Documents: f.docs}
+	if c.Profile == "jina-v5" {
+		p.NeedSetup, p.License = true, "CC BY-NC 4.0: personal and research use"
+	}
+	if c.Profile == "embeddinggemma-2" && f.first.NeedSetup && !f.setupDone {
+		p.NeedSetup, p.License = true, f.first.License
+	}
+	if c.Profile == "openai" && !strings.Contains(c.Service.BaseURL, "localhost") {
+		p.Remote, p.Host = true, "api.example.com"
+	}
+	return p, nil
+}
+func (f *fakeBackend) UseModel(_ context.Context, c ModelChoice, allow bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.used, f.allowed, f.profile = append(f.used, c), allow, c.Profile
+	if f.docs > 0 {
+		f.mismatch = "old -> " + c.Profile
+	}
+	return nil
+}
+func (f *fakeBackend) TestModel(_ context.Context, c ModelChoice) (string, error) {
+	if c.Service.Model == "broken" {
+		return "", errors.New("nothing answers")
+	}
+	return "768 dimensions", nil
+}
+func (f *fakeBackend) SetUserEnv(name, value string) error {
+	f.mu.Lock()
+	f.env = name + "=" + value
+	f.mu.Unlock()
+	return nil
+}
 
 // drive feeds messages to the model and runs the commands they return,
 // skipping commands that block (ticks, waits on channels).
@@ -173,6 +234,14 @@ func TestFirstRunToSearch(t *testing.T) {
 	if f.initDir != "/home/me/Documents" || len(f.inited) != 1 || f.inited[0] != "notes" {
 		t.Fatalf("init with %q %v", f.initDir, f.inited)
 	}
+	// The model step: EmbeddingGemma 2 is preselected (plan2 S18).
+	if v := view(m); !strings.Contains(v, "Which AI model") || !strings.Contains(v, "> EmbeddingGemma 2") {
+		t.Fatalf("model step:\n%s", v)
+	}
+	m = drive(m, key("enter"))
+	if len(f.used) != 1 || f.used[0].Profile != "embeddinggemma-2" {
+		t.Fatalf("model chosen: %+v", f.used)
+	}
 	if !strings.Contains(view(m), "CC BY-NC") {
 		t.Fatalf("license screen:\n%s", view(m))
 	}
@@ -247,5 +316,111 @@ func TestMismatchRebuild(t *testing.T) {
 	}
 	if f.reembeds != 1 {
 		t.Fatalf("reembed ran %d times", f.reembeds)
+	}
+}
+
+// waitReembed delivers the stopped-watch message the fake watch only sends
+// when its context ends, until the rebuild ran.
+func waitReembed(m tea.Model, f *fakeBackend) tea.Model {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		f.mu.Lock()
+		n := f.reembeds
+		f.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		m = drive(m, watchDoneMsg{gen: m.(Model).watchGen})
+	}
+	return m
+}
+
+func tabTo(m tea.Model, name string) tea.Model {
+	for i := 0; i < 5 && !strings.Contains(view(m), "["+name+"]"); i++ {
+		m = drive(m, key("tab"))
+	}
+	return m
+}
+
+// Switching to a service on another computer asks first, records consent
+// and rebuilds (plan2 S10, S1).
+func TestModelViewSwitchesToService(t *testing.T) {
+	f := &fakeBackend{first: FirstRun{Dir: "/x"}, docs: 12}
+	var m tea.Model = New(f)
+	m = drive(m, tea.WindowSizeMsg{Width: 110, Height: 40}, m.Init()())
+	m = drive(m, key("esc"))
+	m = tabTo(m, "Model")
+	if v := view(m); !strings.Contains(v, "> EmbeddingGemma 2") || !strings.Contains(v, "(this folder)") {
+		t.Fatalf("model view:\n%s", v)
+	}
+	m = drive(m, key("down"), key("down"), key("enter"))
+	if !strings.Contains(view(m), "Address:") {
+		t.Fatalf("service form:\n%s", view(m))
+	}
+	// Replace the address with an online one.
+	for i := 0; i < 30; i++ {
+		m = drive(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	m = typeText(m, "https://api.example.com/v1")
+	m = drive(m, key("tab"), key("tab"))
+	m = typeText(m, "MY_KEY")
+	m = drive(m, tea.KeyMsg{Type: tea.KeyCtrlK})
+	m = typeText(m, "sk-123")
+	m = drive(m, key("enter"))
+	if f.env != "MY_KEY=sk-123" {
+		t.Fatalf("key not stored: %q", f.env)
+	}
+	m = drive(m, key("enter"))
+	v := view(m)
+	if !strings.Contains(v, "sent to api.example.com") || !strings.Contains(v, "12 documents") {
+		t.Fatalf("consent screen:\n%s", v)
+	}
+	m = waitReembed(drive(m, key("y")), f)
+	if len(f.used) != 1 || !f.allowed || f.used[0].Service.BaseURL != "https://api.example.com/v1" || f.used[0].Service.KeyEnv != "MY_KEY" {
+		t.Fatalf("used %+v allowed %v", f.used, f.allowed)
+	}
+	if f.reembeds != 1 {
+		t.Fatalf("the switch should rebuild once, rebuilt %d times", f.reembeds)
+	}
+}
+
+// A model that is not installed is downloaded first, then the switch runs.
+func TestModelViewInstallsThenSwitches(t *testing.T) {
+	f := &fakeBackend{first: FirstRun{Dir: "/x"}, docs: 3, setupDone: true}
+	var m tea.Model = New(f)
+	m = drive(m, tea.WindowSizeMsg{Width: 110, Height: 40}, m.Init()())
+	m = drive(m, key("esc"))
+	m = tabTo(m, "Model")
+	m = drive(m, key("down"), key("enter"))
+	if !strings.Contains(view(m), "downloaded first") {
+		t.Fatalf("confirm:\n%s", view(m))
+	}
+	m = drive(m, key("y"))
+	if !strings.Contains(view(m), "CC BY-NC") {
+		t.Fatalf("license:\n%s", view(m))
+	}
+	f.setupRan = false
+	m = drive(m, key("y"))
+	m = waitReembed(drive(m, key("enter")), f)
+	if !f.setupRan || f.reembeds != 1 || !strings.Contains(view(m), "Index rebuilt") || !strings.Contains(view(m), "Jina v5                                non-commercial  (this folder)") {
+		t.Fatalf("setup %v reembeds %d\n%s", f.setupRan, f.reembeds, view(m))
+	}
+}
+
+// A service that does not answer is reported and nothing changes.
+func TestModelViewBrokenService(t *testing.T) {
+	f := &fakeBackend{first: FirstRun{Dir: "/x"}}
+	var m tea.Model = New(f)
+	m = drive(m, tea.WindowSizeMsg{Width: 110, Height: 40}, m.Init()())
+	m = drive(m, key("esc"))
+	m = tabTo(m, "Model")
+	m = drive(m, key("down"), key("down"), key("enter"), key("tab"))
+	for i := 0; i < 20; i++ {
+		m = drive(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	m = typeText(m, "broken")
+	m = drive(m, key("enter"))
+	if !strings.Contains(view(m), "did not answer") || len(f.used) != 0 {
+		t.Fatalf("broken service:\n%s", view(m))
 	}
 }

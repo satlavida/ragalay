@@ -46,16 +46,23 @@ func licenseText(profile string) string {
 
 func (a *app) setupCmd() *cobra.Command {
 	var device string
-	var acceptLicense, yes bool
+	var acceptLicense, yes, prune bool
+	var remove []string
 	cmd := &cobra.Command{
 		Use:   "setup",
-		Short: "Download and check the AI models ragalay needs (one time per computer)",
-		Long: `Downloads Python, PyTorch, the indexing model and the search model into a
-shared folder on this computer (every ragalay folder reuses it), then runs a
-self-test. Safe to run again: finished steps are skipped.`,
+		Short: "Download and check the AI model this folder uses (one time per computer)",
+		Long: `Downloads Python, PyTorch, the folder's indexing model and search model into
+a shared folder on this computer (every ragalay folder reuses it), then runs a
+self-test. Safe to run again: finished steps are skipped. A folder that uses an
+embedding service needs nothing installed.
+
+--prune lists the models in the shared folder with their sizes; --remove
+deletes one (other folders that use it will need "ragalay setup" again).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
+			if prune || len(remove) > 0 {
+				return a.pruneModels(remove, yes)
+			}
 			root, err := a.root()
 			if err != nil {
 				return err
@@ -67,97 +74,105 @@ self-test. Safe to run again: finished steps are skipped.`,
 			if err := cfg.Validate(); err != nil {
 				return fmt.Errorf("fix .ragalay/config.toml first:\n%w", err)
 			}
-			cache, err := setup.CacheDir()
-			if err != nil {
-				return err
-			}
-			prof, err := cfg.Embed.Lookup()
-			if err != nil {
-				return err
-			}
-			if !prof.Local() {
-				fmt.Fprintf(a.stdout, "This folder uses %s at %s; there is nothing to install.\n",
-					cfg.Embed.OpenAI.Model, cfg.Embed.OpenAI.Host())
-				return nil
-			}
-			opts := setup.Options{Device: device, Profile: prof.Name, MaxSide: cfg.Embed.ImageMaxSide}
-			st, err := setup.LoadState(cache)
-			if err != nil {
-				return err
-			}
-			plan, err := setup.Prepare(ctx, cache, opts)
-			if err != nil {
-				return err
-			}
-
-			w := a.stdout
-			if !prof.NonCommercial && len(plan.Downloads) > 0 {
-				fmt.Fprintln(w, licenseText(prof.Name))
-				fmt.Fprintln(w)
-			}
-			if prof.NonCommercial && st.Profile(prof.Name).LicenseAccepted == "" {
-				fmt.Fprintln(w, licenseText(prof.Name))
-				fmt.Fprintln(w)
-				if !acceptLicense {
-					ok, err := a.confirm("Do you accept these terms? Type yes to continue: ", true)
-					if err != nil {
-						return err
-					}
-					if !ok {
-						return &exitError{ExitSetupIncomplete, errors.New("setup needs the model license accepted (or pass --accept-license)")}
-					}
-				}
-				st.AcceptLicense(prof.Name)
-				if err := st.Save(cache); err != nil {
-					return err
-				}
-			}
-
-			fmt.Fprintf(w, "Accelerator: %s (%s)\n", plan.Detection.Variant, plan.Detection.Reason)
-			fmt.Fprintf(w, "Shared folder: %s\n", cache)
-			if len(plan.Downloads) > 0 {
-				fmt.Fprintln(w, "To download:")
-				for _, d := range plan.Downloads {
-					fmt.Fprintf(w, "  %-48s ~%s\n", d.Name, humanBytes(d.Size))
-				}
-				fmt.Fprintf(w, "  %-48s ~%s\n", "total", humanBytes(plan.Total))
-				if !yes {
-					ok, err := a.confirm("Continue? [Y/n] ", false)
-					if err != nil {
-						return err
-					}
-					if !ok {
-						return &exitError{ExitSetupIncomplete, errors.New("setup cancelled")}
-					}
-				}
-			}
-
-			logFile, err := os.OpenFile(filepath.Join(root, config.DirName, config.LogsDir, "setup.log"),
-				os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-			if err != nil {
-				return err
-			}
-			defer logFile.Close()
-			fmt.Fprintf(logFile, "\n==== ragalay %s setup %s ====\n", Version, time.Now().Format(time.RFC3339))
-			opts.Log = logFile
-			opts.Report = &termReporter{w: w}
-
-			st, err = setup.Run(ctx, cache, opts)
-			opts.Report.(*termReporter).endLine()
-			if err != nil {
-				return &exitError{ExitSetupIncomplete, fmt.Errorf("%w\n(details in .ragalay/logs/setup.log)", err)}
-			}
-			if err := recordSetup(ctx, root, cfg, st); err != nil {
-				return err
-			}
-			fmt.Fprintf(w, "\nSetup complete. Indexing runs on %s; search runs on the CPU.\n", st.DeviceName)
-			return nil
+			return a.installModels(cmd.Context(), root, cfg, device, acceptLicense, yes)
 		},
 	}
 	cmd.Flags().StringVar(&device, "device", "auto", "indexing accelerator: auto, cpu, cuda, mps, rocm-gfx1201, rocm-gfx1200")
 	cmd.Flags().BoolVar(&acceptLicense, "accept-license", false, "accept a non-commercial model license (Jina v5) without asking")
-	cmd.Flags().BoolVar(&yes, "yes", false, "download without asking")
+	cmd.Flags().BoolVar(&yes, "yes", false, "download (or remove) without asking")
+	cmd.Flags().BoolVar(&prune, "prune", false, "list the models in the shared folder and choose which to remove")
+	cmd.Flags().StringSliceVar(&remove, "remove", nil, "remove this model from the shared folder (embeddinggemma-2, jina-v5)")
 	return cmd
+}
+
+// installModels sets up cfg's model on this computer: license, download
+// prompt, install, self-test (plan2 §5.5).
+func (a *app) installModels(ctx context.Context, root string, cfg config.Config, device string, acceptLicense, yes bool) error {
+	cache, err := setup.CacheDir()
+	if err != nil {
+		return err
+	}
+	prof, err := cfg.Embed.Lookup()
+	if err != nil {
+		return err
+	}
+	if !prof.Local() {
+		fmt.Fprintf(a.stdout, "This folder uses %s at %s; there is nothing to install.\n",
+			cfg.Embed.OpenAI.Model, cfg.Embed.OpenAI.Host())
+		return nil
+	}
+	opts := setup.Options{Device: device, Profile: prof.Name, MaxSide: cfg.Embed.ImageMaxSide}
+	st, err := setup.LoadState(cache)
+	if err != nil {
+		return err
+	}
+	plan, err := setup.Prepare(ctx, cache, opts)
+	if err != nil {
+		return err
+	}
+
+	w := a.stdout
+	if !prof.NonCommercial && len(plan.Downloads) > 0 {
+		fmt.Fprintln(w, licenseText(prof.Name))
+		fmt.Fprintln(w)
+	}
+	if prof.NonCommercial && st.Profile(prof.Name).LicenseAccepted == "" {
+		fmt.Fprintln(w, licenseText(prof.Name))
+		fmt.Fprintln(w)
+		if !acceptLicense {
+			ok, err := a.confirm("Do you accept these terms? Type yes to continue: ", true)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return &exitError{ExitSetupIncomplete, errors.New("setup needs the model license accepted (or pass --accept-license)")}
+			}
+		}
+		st.AcceptLicense(prof.Name)
+		if err := st.Save(cache); err != nil {
+			return err
+		}
+	}
+
+	fmt.Fprintf(w, "Accelerator: %s (%s)\n", plan.Detection.Variant, plan.Detection.Reason)
+	fmt.Fprintf(w, "Shared folder: %s\n", cache)
+	if len(plan.Downloads) > 0 {
+		fmt.Fprintln(w, "To download:")
+		for _, d := range plan.Downloads {
+			fmt.Fprintf(w, "  %-48s ~%s\n", d.Name, humanBytes(d.Size))
+		}
+		fmt.Fprintf(w, "  %-48s ~%s\n", "total", humanBytes(plan.Total))
+		if !yes {
+			ok, err := a.confirm("Continue? [Y/n] ", false)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return &exitError{ExitSetupIncomplete, errors.New("setup cancelled")}
+			}
+		}
+	}
+
+	logFile, err := os.OpenFile(filepath.Join(root, config.DirName, config.LogsDir, "setup.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	fmt.Fprintf(logFile, "\n==== ragalay %s setup %s ====\n", Version, time.Now().Format(time.RFC3339))
+	opts.Log = logFile
+	opts.Report = &termReporter{w: w}
+
+	st, err = setup.Run(ctx, cache, opts)
+	opts.Report.(*termReporter).endLine()
+	if err != nil {
+		return &exitError{ExitSetupIncomplete, fmt.Errorf("%w\n(details in .ragalay/logs/setup.log)", err)}
+	}
+	if err := recordSetup(ctx, root, cfg, st); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "\nSetup complete. Indexing runs on %s; search runs on the CPU.\n", st.DeviceName)
+	return nil
 }
 
 // recordSetup stores the license acceptance and the index's vector space in

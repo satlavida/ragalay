@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -12,11 +13,13 @@ import (
 	"time"
 
 	"github.com/satlavida/ragalay/internal/config"
+	"github.com/satlavida/ragalay/internal/embed"
 	"github.com/satlavida/ragalay/internal/index"
 	"github.com/satlavida/ragalay/internal/open"
 	"github.com/satlavida/ragalay/internal/scan"
 	"github.com/satlavida/ragalay/internal/search"
 	"github.com/satlavida/ragalay/internal/setup"
+	"github.com/satlavida/ragalay/internal/store"
 	"github.com/satlavida/ragalay/internal/tui"
 	"github.com/satlavida/ragalay/internal/update"
 )
@@ -286,6 +289,119 @@ func (b *tuiBackend) Reembed(ctx context.Context, ev func(tui.WatchEvent)) error
 		}
 	})
 	return err
+}
+
+// settings returns the folder's config, or the defaults before init.
+func (b *tuiBackend) settings() config.Config {
+	if b.root != "" {
+		if cfg, err := config.Load(b.root); err == nil {
+			return cfg
+		}
+	}
+	return config.Default()
+}
+
+func (b *tuiBackend) Models(ctx context.Context) (tui.Models, error) {
+	cfg := b.settings()
+	out := tui.Models{CanSetEnv: canSetUserEnv}
+	for _, o := range modelOptions(cfg.Embed) {
+		out.Options = append(out.Options, tui.ModelOption{Name: o.Name, Title: o.Title, Pitch: o.Pitch,
+			License: o.License, Local: o.Local, Installed: o.Installed, Active: o.Active})
+	}
+	svc := cfg.Embed.OpenAI
+	if svc == nil {
+		svc = config.DefaultOpenAI()
+	}
+	out.Service = tui.Service{BaseURL: svc.BaseURL, Model: svc.Model, KeyEnv: svc.APIKeyEnv, ImageInput: svc.ImageInput,
+		KeySet: svc.APIKeyEnv != "" && os.Getenv(svc.APIKeyEnv) != ""}
+	name := svc.APIKeyEnv
+	if name == "" {
+		name = "MY_API_KEY"
+	}
+	out.KeyHelp = keyHelp(name)
+	return out, nil
+}
+
+// choiceEmbed applies a TUI model choice to emb. A service's dimension is
+// detected when it is used.
+func choiceEmbed(emb config.Embed, c tui.ModelChoice) (config.Embed, error) {
+	e, err := emb.UseProfile(c.Profile, 0)
+	if err != nil || c.Profile != embed.OpenAI {
+		return e, err
+	}
+	o := *e.OpenAI
+	o.BaseURL, o.Model, o.APIKeyEnv, o.ImageInput = c.Service.BaseURL, c.Service.Model, c.Service.KeyEnv, c.Service.ImageInput
+	e.OpenAI, e.Dim = &o, 0
+	return e, nil
+}
+
+func (b *tuiBackend) PlanModel(ctx context.Context, c tui.ModelChoice) (tui.ModelPlan, error) {
+	e, err := choiceEmbed(b.settings().Embed, c)
+	if err != nil {
+		return tui.ModelPlan{}, err
+	}
+	var p tui.ModelPlan
+	if prof, _ := e.Lookup(); prof.Local() {
+		p.NeedSetup = !loadSetupState().Ready(prof.Name)
+		p.License = licenseText(prof.Name)
+	} else {
+		p.Remote, p.Host = e.Remote(), e.OpenAI.Host()
+	}
+	if b.root != "" {
+		store.With(ctx, dbPath(b.root), func(db *sql.DB) error {
+			return db.QueryRowContext(ctx, `SELECT count(*) FROM documents`).Scan(&p.Documents)
+		})
+	}
+	return p, nil
+}
+
+func (b *tuiBackend) UseModel(ctx context.Context, c tui.ModelChoice, allowUpload bool) error {
+	cfg := b.settings()
+	e, err := choiceEmbed(cfg.Embed, c)
+	if err != nil {
+		return err
+	}
+	if e.Profile == embed.OpenAI {
+		res, err := probeModel(ctx, e)
+		if err != nil {
+			return err
+		}
+		e.Dim = res.Dim
+	}
+	cfg.Embed = e
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if err := config.Save(b.root, cfg); err != nil {
+		return err
+	}
+	if allowUpload && e.Remote() {
+		return store.With(ctx, dbPath(b.root), func(db *sql.DB) error {
+			return store.Tx(ctx, db, func(tx *sql.Tx) error {
+				return store.SetMeta(ctx, tx, consentKey(e.OpenAI.Host()), time.Now().UTC().Format(time.RFC3339))
+			})
+		})
+	}
+	return nil
+}
+
+func (b *tuiBackend) TestModel(ctx context.Context, c tui.ModelChoice) (string, error) {
+	e, err := choiceEmbed(b.settings().Embed, c)
+	if err != nil {
+		return "", err
+	}
+	res, err := probeModel(ctx, e)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d dimensions, %d ms per search", res.Dim, res.QueryMS), nil
+}
+
+func (b *tuiBackend) SetUserEnv(name, value string) error {
+	if err := setUserEnv(name, value); err != nil {
+		return err
+	}
+	return os.Setenv(name, value) // this window too
 }
 
 func (b *tuiBackend) AddFolder(ctx context.Context, p string) (string, error) {
