@@ -2,7 +2,7 @@
 
 ## Project
 
-`ragalay` is a Go CLI with a small TUI. It ingests Markdown, PDF, and image files (audio and video come in Plan 2), chunks and embeds them, and stores the vectors plus a BM25 index in Turso. Indexing uses Jina v5 omni-small in a Python sidecar. Search embeds queries with the Jina v5 text-small GGUF through llama.cpp. AI agents search through the CLI (`--json`) and MCP. People search through the TUI. You copy the binary into a directory and it works on that directory.
+`ragalay` is a Go CLI with a small TUI. It ingests Markdown, PDF, and image files (audio and video come in Plan 3), chunks and embeds them, and stores the vectors plus a BM25 index in Turso. Indexing uses Jina v5 omni-small in a Python sidecar. Search embeds queries with the Jina v5 text-small GGUF through llama.cpp. AI agents search through the CLI (`--json`) and MCP. People search through the TUI. You copy the binary into a directory and it works on that directory.
 
 - Module: `github.com/satlavida/ragalay` (Go 1.26). `spikes/` is a separate throwaway module (Phase 0 experiments)
 - Layout: `cmd/ragalay` (main) → `internal/cli` (cobra commands) → `internal/config` (config.toml, root discovery, folders) and `internal/store` (Turso schema, migrations, queries, query cache)

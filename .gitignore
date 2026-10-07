@@ -15,6 +15,7 @@ Thumbs.db
 # Spike fixtures and outputs (downloaded / generated)
 spikes/fixtures/
 spikes/omni/out/
+spikes/gemma/out/
 *.db
 *.db-wal
 *.db-shm

@@ -2,7 +2,7 @@
 
 **Status:** In progress. All 9 phases done locally (2026-10-06); waiting on user-side items in Phase 8 (publish a release, Mac checks, human double-click test) before archiving.
 **Created:** 2026-10-06 · **Finalized:** 2026-10-06 (after 4 grilling rounds)
-**Follow-ups:** `plans/plan2` (audio/video, search by example), `plans/plan3` (speed, background indexing, distribution)
+**Follow-ups:** `plans/plan2` (swappable models, OpenAI-compatible endpoints), `plans/plan3` (audio/video, search by example), `plans/plan4` (speed, background indexing, distribution). Renumbered 2026-10-07.
 
 ---
 
@@ -19,7 +19,7 @@
 | D2 | Query model: **`jinaai/jina-embeddings-v5-text-small-retrieval` GGUF via llama.cpp**. Jina documents its text vectors as identical to omni's, so search never starts Python. If llama.cpp is unavailable, search falls back to keyword-only. |
 | D3 | Database: **Turso's CGO-free Go driver** (`tursogo`, purego), with an embedded file `.ragalay/index.db`. It stores the embeddings and the keyword (BM25) index. |
 | D4 | Scanning: on-demand `scan` plus `scan --watch`. The TUI watches while open. |
-| D5 | In scope: MCP server, hybrid search (vector + BM25, RRF). **Out:** audio and video (→ Plan 2), OCR (→ Plan 3). |
+| D5 | In scope: MCP server, hybrid search (vector + BM25, RRF). **Out:** audio and video (→ Plan 3), OCR (→ Plan 4). |
 | D6 | Platforms: windows/amd64, darwin/arm64, darwin/amd64, linux/amd64, linux/arm64. No CGO. Never assume CUDA. |
 | D7 | Repo `github.com/satlavida/ragalay`. Module path renamed to that in Phase 1. Code license **Apache-2.0**. |
 
@@ -39,7 +39,7 @@
 | G11 | Test hardware: Windows + AMD RX 9070 XT, Mac M3 Pro, Linux via CI. |
 | G12 | **Single indexer** via `.ragalay/index.lock` (pid, progress). Other processes report "indexing in progress (ETA)". Searches are read-only. |
 | G13 | Double-click (no args) opens the TUI. First run is a **setup wizard**: choose folders, accept the license, download with progress, first scan. |
-| G14 | Unsigned binaries. The README shows "Open anyway" steps with screenshots. Signing, Homebrew, and winget come in Plan 3. |
+| G14 | Unsigned binaries. The README shows "Open anyway" steps with screenshots. Signing, Homebrew, and winget come in Plan 4. |
 | G15 | Search output: one result per chunk by default with full chunk text (≤ ~2k chars, `--max-chars`), `k=10`, and `--group-by doc`. |
 | G16 | Chunking: **256 tokens with 32 overlap** (Phase 0 eval, §3.1; was 512/64), split at headings first. Configurable. Re-check on real documents. |
 | G17 | The Turso native library is **embedded in the binary** and extracted on first run. llama.cpp, the GGUF, the omni weights, and the Python venv are **downloaded during setup** into a shared user cache. |
@@ -81,7 +81,7 @@
   | yzma, Vulkan | 1.3 s | 2.9 s (shader warmup) | 140 ms |
   | llama-server, Vulkan | 3.8 s | 0.96 s | 95 ms |
 
-- **Decision (G4): yzma in-process, CPU backend, for query embedding.** A cold one-shot search takes ~0.7 s to get its vector, and cache hits are instant. The GPU doesn't help short queries and adds driver risk. So search uses the **CPU llama.cpp build on every OS** (smaller download, no Vulkan/Metal dependency). GPU stays an option for indexing text in Plan 3.
+- **Decision (G4): yzma in-process, CPU backend, for query embedding.** A cold one-shot search takes ~0.7 s to get its vector, and cache hits are instant. The GPU doesn't help short queries and adds driver risk. So search uses the **CPU llama.cpp build on every OS** (smaller download, no Vulkan/Metal dependency). GPU stays an option for indexing text in Plan 4.
 - Windows gotcha: put the llama.cpp lib dir on `PATH` before `llama.Load`, otherwise `ggml.dll` can't find its sibling DLLs.
 - **Parity with omni query vectors** (50 queries):
   - Q8_0: cosine min 0.9996 / median 0.9997, **top-1 doc identical 50/50**.
