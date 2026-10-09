@@ -8,6 +8,8 @@ Everything runs on your computer. Your documents never leave it (unless you choo
 
 ## Get started (5 minutes, plus a one-time download)
 
+**Use an AI agent such as Claude Code?** It can do all of this for you. Ask it: *"Set up ragalay for my documents folder, following https://github.com/satlavida/ragalay/blob/main/SETUP-FOR-AGENTS.md"*.
+
 ### 1. Download ragalay
 
 Go to the [Releases page](https://github.com/satlavida/ragalay/releases/latest) and download the file for your computer:
@@ -196,6 +198,8 @@ The indexing model also sits in the Hugging Face cache (`~/.cache/huggingface`),
 
 Everything the window does is also a command. Run `ragalay <command> --help` for details.
 
+**Agents setting ragalay up for a user** (download, install, first index, connecting MCP, showing the user around): follow [SETUP-FOR-AGENTS.md](SETUP-FOR-AGENTS.md). It also covers search tactics for agents.
+
 ```text
 ragalay init [folder]                 make a folder searchable (creates .ragalay/)
 ragalay setup [--device auto|cpu|cuda|mps|rocm-gfx1201] [--accept-license --yes]
@@ -231,13 +235,13 @@ A JSON array, most relevant first:
     "kind": "pdf",
     "modality": "text",
     "page": 3,
-    "heading_path": "",
     "text": "The encoder is composed of a stack of N = 6 identical layers…",
-    "paired_path": "transcripts/attention.md",
-    "parent_path": ""
+    "paired_path": "transcripts/attention.md"
   }
 ]
 ```
+
+Fields that are empty are left out (here `heading_path` and `parent_path`). If the index is partway through a model switch, a `note: …` line on stderr explains which model the results come from.
 
 - `modality` is `text`, `image` or `pdf_page` (a page matched as a picture; `text` is empty, cite the page).
 - `parent_path` is set for pictures inside a Markdown file (`path` is the picture).
