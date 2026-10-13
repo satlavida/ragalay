@@ -19,6 +19,7 @@ const (
 	KindMarkdown = "markdown"
 	KindPDF      = "pdf"
 	KindImage    = "image"
+	KindCode     = "code"
 )
 
 // extensions maps file extensions to (config kind, document kind).
@@ -32,6 +33,18 @@ var extensions = map[string][2]string{
 	".webp":     {"image", KindImage},
 	".gif":      {"image", KindImage},
 	".bmp":      {"image", KindImage},
+}
+
+// MaxCodeBytes is the largest code file that is indexed; bigger ones are
+// almost always generated or data.
+const MaxCodeBytes = 1 << 20
+
+func init() {
+	for _, e := range strings.Fields(`.go .py .js .mjs .cjs .jsx .ts .tsx .rs .java .kt .kts .scala .c .h .cc .cpp .cxx .hpp
+		.cs .rb .php .swift .m .sh .bash .zsh .ps1 .sql .lua .r .dart .ex .exs .erl .hs .ml .clj .vue .svelte
+		.css .scss .html .toml .yaml .yml .proto .tf .gradle .zig .nim .jl`) {
+		extensions[e] = [2]string{"code", KindCode}
+	}
 }
 
 // KindOf returns the document kind for a path if its extension is one of
@@ -107,6 +120,19 @@ func (m *Matcher) Skip(rel string, dir bool) bool {
 	return false
 }
 
+// generatedName reports lockfiles and minified bundles, which are noise.
+func generatedName(rel string) bool {
+	base := strings.ToLower(path.Base(rel))
+	if strings.HasSuffix(base, ".min.js") || strings.HasSuffix(base, ".min.css") || strings.HasSuffix(base, ".map") {
+		return true
+	}
+	switch base {
+	case "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "cargo.lock", "poetry.lock", "go.sum", "composer.lock":
+		return true
+	}
+	return false
+}
+
 // Walk lists the documents under the configured folders. Folders that do
 // not exist are reported, not fatal.
 func Walk(root string, cfg config.Config) (files map[string]File, missing []string, err error) {
@@ -148,6 +174,9 @@ func Walk(root string, cfg config.Config) (files map[string]File, missing []stri
 			}
 			fi, err := d.Info()
 			if err != nil {
+				return nil
+			}
+			if kind == KindCode && (fi.Size() > MaxCodeBytes || generatedName(rel)) {
 				return nil
 			}
 			files[rel] = File{Path: rel, Kind: kind, Size: fi.Size(), MTime: fi.ModTime().UnixNano()}

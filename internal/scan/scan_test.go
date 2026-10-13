@@ -343,3 +343,22 @@ func TestWatchRescansOnChanges(t *testing.T) {
 	config.Save(root, cfg)
 	next("config reload", func(r Report) bool { return slices.Contains(r.Deleted, "drop/b.md") })
 }
+
+func TestCodeFilesAreScannedExceptGenerated(t *testing.T) {
+	root := newRoot(t)
+	write(t, root, "src/main.go", "package main\n")
+	write(t, root, "web/app.min.js", "x=1")
+	write(t, root, "web/package-lock.json", "{}")
+	write(t, root, "src/big.go", strings.Repeat("x", MaxCodeBytes+1))
+	write(t, root, "vendor/dep/dep.go", "package dep\n")
+	mustScan(t, root, config.Default())
+	d := docs(t, root)
+	if d["src/main.go"].Kind != KindCode {
+		t.Errorf("main.go kind = %q", d["src/main.go"].Kind)
+	}
+	for _, p := range []string{"web/app.min.js", "web/package-lock.json", "src/big.go", "vendor/dep/dep.go"} {
+		if _, ok := d[p]; ok {
+			t.Errorf("%s should be skipped", p)
+		}
+	}
+}

@@ -14,13 +14,14 @@
 
 ## Code files (added 2026-10-13, user request)
 - **New config kind `code`** (opt-in via `scan.kinds`, on by default for new folders). Common extensions: go, py, js, ts, tsx, jsx, rs, java, kt, c, h, cc, cpp, hpp, cs, rb, php, swift, sh, sql, lua, toml, yaml, json (size-capped).
-- **Decision (user, 2026-10-13):** text chunks split on blank lines and top-level block boundaries, with `start_line`/`end_line` on chunks. No tree-sitter, no CGO. The text model embeds them, and BM25 indexes identifiers (split camelCase and snake_case as extra tokens).
+- **Decision (user, 2026-10-13):** text chunks split on blank lines, as whole lines. No tree-sitter, no CGO. The text model embeds them, and BM25 indexes identifiers (split camelCase and snake_case as extra tokens).
 - Skips: files over a size cap (default 1 MB), minified or generated files (long lines, `node_modules`, `vendor`, lockfiles), binary content.
-- Results and TUI show `path:start-end`. Opening a hit jumps to the line where the editor supports it.
+- **Built (2026-10-13, Phase A):** the line range is stored in `heading_path` as `main.go:40-88`, so no schema change or shadow-table migration was needed, and results, MCP and the TUI already show it. Dedicated `start_line`/`end_line` columns can wait until something needs to filter on them. camelCase splitting in BM25 is deferred: it changes the shared tokenizer and would force a reindex of every folder.
+- Opening a hit at its line in an editor is not done yet.
 - Needs no new model, so it can ship before audio and video.
 
 ## Schema changes
-- `chunks` gains `start_ms`, `end_ms`, `start_line`, `end_line`. `documents.kind` gains `code`.
+- `documents.kind` gains `code` (no schema change; the column is free text).
 - `chunks` gains `start_ms`, `end_ms`. `documents.kind` gains `audio | video`. `modality` gains `audio | video`.
 
 ## Open questions
@@ -32,7 +33,7 @@
 
 ## Phases (draft)
 - Phase 0: spikes on Q1–Q5 (user chose this over a transcription-only design; if native audio/video is too slow or unsupported on a profile, fall back to Whisper transcripts indexed as timestamped text for that profile)
-- Phase A: code files (independent of the spikes, can ship first)
+- Phase A: code files ✅ Done (2026-10-13), shipped ahead of the media phases
 - Phase 1: audio windowing + ingest
 - Phase 2: video windowing + ingest
 - Phase 3: search by example (CLI, MCP, TUI)

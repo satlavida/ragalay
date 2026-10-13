@@ -142,6 +142,14 @@ func (e *Extractor) Extract(ctx context.Context, kind, rel string, paired bool) 
 		}
 		return res, nil
 
+	case scan.KindCode:
+		src, err := os.ReadFile(file)
+		if err != nil {
+			return Result{}, err
+		}
+		units, err := Code(rel, src, e.Opts.Tokens, e.Opts.Overlap, e.Opts.Tokenizer)
+		return Result{Units: units}, err
+
 	case scan.KindImage:
 		return Result{Units: []Unit{{Modality: embed.Image, Source: rel}}}, nil
 	}

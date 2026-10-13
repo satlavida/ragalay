@@ -25,7 +25,7 @@ const (
 )
 
 // Kinds that Plan 1 can ingest.
-var supportedKinds = []string{"md", "pdf", "image"}
+var supportedKinds = []string{"md", "pdf", "image", "code"}
 
 type Config struct {
 	Scan   Scan   `toml:"scan"`
@@ -95,8 +95,8 @@ func Default() Config {
 		Scan: Scan{
 			Folders: []string{},
 			Keep:    []string{},
-			Ignore:  []string{"**/node_modules/**", "**/.git/**"},
-			Kinds:   []string{"md", "pdf", "image"},
+			Ignore:  []string{"**/node_modules/**", "**/.git/**", "**/vendor/**", "**/.venv/**", "**/__pycache__/**"},
+			Kinds:   []string{"md", "pdf", "image", "code"},
 		},
 		Index:  Index{PDFPageImages: true},
 		Chunk:  Chunk{Tokens: 256, Overlap: 32},

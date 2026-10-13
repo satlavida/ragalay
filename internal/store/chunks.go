@@ -152,7 +152,7 @@ type Job struct {
 const MaxAttempts = 3
 
 // QueuedJobsInOrder returns waiting jobs, text first so search is useful
-// soon: Markdown, then PDFs, then images (plan1 §4.4).
+// soon: Markdown, code, PDFs, then images (plan1 §4.4).
 func QueuedJobsInOrder(ctx context.Context, db *sql.DB) ([]Job, error) {
 	rows, err := db.QueryContext(ctx, `SELECT d.id, d.path, d.kind, coalesce(d.sha256, ''), coalesce(d.size, 0),
 		coalesce(d.mtime, 0), d.status, coalesce(d.error, ''), d.chunk_count, coalesce(d.pair_document_id, 0),
@@ -160,7 +160,7 @@ func QueuedJobsInOrder(ctx context.Context, db *sql.DB) ([]Job, error) {
 		FROM jobs j JOIN documents d ON d.id = j.document_id
 		LEFT JOIN documents p ON p.id = d.pair_document_id
 		WHERE j.state = 'queued'
-		ORDER BY CASE d.kind WHEN 'markdown' THEN 0 WHEN 'pdf' THEN 1 ELSE 2 END, j.enqueued_at, d.path`)
+		ORDER BY CASE d.kind WHEN 'markdown' THEN 0 WHEN 'code' THEN 1 WHEN 'pdf' THEN 2 ELSE 3 END, j.enqueued_at, d.path`)
 	if err != nil {
 		return nil, err
 	}

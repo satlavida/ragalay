@@ -22,6 +22,7 @@ const (
 // defaultRate is seconds per unit before anything has been measured.
 var defaultRate = map[string]float64{
 	scan.KindMarkdown: 0.3,
+	scan.KindCode:     0.3,
 	scan.KindPDF:      1,
 	scan.KindImage:    1,
 }

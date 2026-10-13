@@ -90,7 +90,7 @@ ragalay  [Search]  Status   Folders    42 documents indexed
 
 **How long indexing takes**: the percentage counts work by size, so a 300-page PDF moves the bar more than a short note. The time left is learned from your own computer and improves as it goes. At the start it says "estimating" until it has timed a few files, and later runs begin with what the last one learned.
 
-**What ragalay reads**: Markdown (`.md`), PDF (including scanned PDFs, which it reads as pictures of the pages), and pictures (`.png`, `.jpg`, `.webp`, `.gif`, `.bmp`).
+**What ragalay reads**: Markdown (`.md`), PDF (including scanned PDFs, which it reads as pictures of the pages), pictures (`.png`, `.jpg`, `.webp`, `.gif`, `.bmp`), and source code (`.go`, `.py`, `.js`, `.ts`, `.rs`, `.java`, `.c`, `.cpp`, `.sh`, `.sql` and many more). Code is read as text and cut into passages of whole lines, and a result names the lines, for example `main.go:40-88`. ragalay skips code files over 1 MB, minified files, lockfiles and `vendor` folders. Folders created before code support keep their old settings: add `"code"` to `kinds` under `[scan]` in `.ragalay/config.toml` to turn it on.
 
 **Pictures in Markdown files**: keep the pictures a Markdown file shows **in the same folder as the Markdown file** (or a subfolder such as `images/` or `assets/`). ragalay then indexes each picture together with its caption and the heading it sits under, and search results say which file it appears in.
 
