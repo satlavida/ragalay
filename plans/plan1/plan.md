@@ -423,6 +423,6 @@ Official Go SDK, stdio. Tools: `search`, `status`, `list_documents`, `list_folde
   - ⏳ **Pending the user:**
     1. Create `github.com/satlavida/ragalay` and push. CI runs on Windows, macOS, and Linux.
     2. `git tag v0.1.0 && git push --tags` → a draft release with binaries. Review and publish it.
-    3. Mac drop-in test (+ MPS indexing).
+    3. Mac drop-in test (+ MPS indexing). **Done on an M-series Mac (macOS 27, arm64) 2026-10-13:** `go test ./...` with the real EmbeddingGemma 2 model passes (sidecar on MPS, llama.cpp query, tursogo, double-click flow, audio/video). A copied binary in a clean folder indexed md, code, mp3 and mp4 and searched them. Still unchecked on Mac: Gatekeeper warning screens, a release build downloaded from GitHub, Jina, Intel Macs.
     4. Double-click test by a non-technical person on Windows and Mac.
     5. Real screenshots of the OS warning dialogs for the README.

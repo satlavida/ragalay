@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -310,5 +311,16 @@ func TestMergeMomentsFoldsOverlappingWindows(t *testing.T) {
 	}
 	if got[0].Score != 3 {
 		t.Errorf("merged keeps the best score, got %v", got[0].Score)
+	}
+}
+
+func TestResultJSONKeepsZeroStart(t *testing.T) {
+	b, err := json.Marshal(Result{Path: "a.mp3", EndMS: 4000})
+	if err != nil || !strings.Contains(string(b), `"start_ms":0`) {
+		t.Fatalf("start_ms missing: %s %v", b, err)
+	}
+	b, _ = json.Marshal(Result{Path: "a.md"})
+	if strings.Contains(string(b), "start_ms") {
+		t.Fatalf("text hit has start_ms: %s", b)
 	}
 }

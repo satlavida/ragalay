@@ -8,6 +8,7 @@ package search
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -51,7 +52,7 @@ type Result struct {
 	Kind        string  `json:"kind"`
 	Modality    string  `json:"modality"`
 	Page        int     `json:"page,omitempty"`
-	StartMS     int64   `json:"start_ms,omitempty"` // audio and video: the moment the hit covers
+	StartMS     int64   `json:"-"` // audio and video: the moment the hit covers (see MarshalJSON)
 	EndMS       int64   `json:"end_ms,omitempty"`
 	HeadingPath string  `json:"heading_path,omitempty"`
 	Text        string  `json:"text,omitempty"`
@@ -63,6 +64,20 @@ type Result struct {
 	docID   int64
 	pairID  int64
 	pairKey string
+}
+
+// MarshalJSON writes start_ms whenever the hit has a time range, so a moment
+// that starts at 0 still says so.
+func (r Result) MarshalJSON() ([]byte, error) {
+	type plain Result
+	out := struct {
+		plain
+		StartMS *int64 `json:"start_ms,omitempty"`
+	}{plain: plain(r)}
+	if r.EndMS > 0 {
+		out.StartMS = &r.StartMS
+	}
+	return json.Marshal(out)
 }
 
 // Response is a search answer.
