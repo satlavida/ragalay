@@ -27,7 +27,7 @@ type SearchInput struct {
 	Query    string   `json:"query" jsonschema:"what to look for, in natural language or keywords"`
 	K        int      `json:"k,omitempty" jsonschema:"number of results (default 10)"`
 	Mode     string   `json:"mode,omitempty" jsonschema:"hybrid (default), vector or keyword"`
-	Modality []string `json:"modality,omitempty" jsonschema:"only these kinds of hits: text, image, pdf_page"`
+	Modality []string `json:"modality,omitempty" jsonschema:"only these kinds of hits: text, image, pdf_page, audio, video"`
 	PathGlob string   `json:"path_glob,omitempty" jsonschema:"only files whose path matches, e.g. papers/*.pdf"`
 	GroupBy  string   `json:"group_by,omitempty" jsonschema:"chunk (default) or doc for one result per document"`
 	MaxChars int      `json:"max_chars,omitempty" jsonschema:"trim each result's text (default 2000)"`
@@ -43,7 +43,7 @@ type SearchOutput struct {
 // ListDocumentsInput filters list_documents.
 type ListDocumentsInput struct {
 	Status string `json:"status,omitempty" jsonschema:"pending, processing, done, failed or stale"`
-	Kind   string `json:"kind,omitempty" jsonschema:"markdown, pdf or image"`
+	Kind   string `json:"kind,omitempty" jsonschema:"markdown, pdf, image, code, audio or video"`
 }
 
 // Empty is for tools without arguments.
@@ -57,10 +57,11 @@ type Result struct {
 // New builds the MCP server.
 func New(b Backend, version string) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "ragalay", Version: version}, &mcp.ServerOptions{
-		Instructions: "ragalay searches the user's local documents (Markdown, PDF, images). " +
+		Instructions: "ragalay searches the user's local documents (Markdown, PDF, images, code, audio, video). " +
 			"Use search to find passages; cite results by path and page. " +
 			"Results with parent_path are images shown inside that Markdown file; " +
-			"paired_path names a Markdown transcription of the PDF.",
+			"paired_path names a Markdown transcription of the PDF. " +
+			"Audio and video hits carry start_ms and end_ms: cite them as a time range (m:ss) in the file.",
 	})
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "search",

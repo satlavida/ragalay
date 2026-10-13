@@ -292,3 +292,23 @@ func first(r Response) Result {
 	}
 	return r.Results[0]
 }
+
+func TestMergeMomentsFoldsOverlappingWindows(t *testing.T) {
+	rs := []Result{
+		{docID: 1, Modality: "audio", StartMS: 25_000, EndMS: 55_000, Score: 3},
+		{docID: 1, Modality: "video", StartMS: 0, EndMS: 30_000, Score: 2},      // overlaps the first
+		{docID: 1, Modality: "audio", StartMS: 60_000, EndMS: 90_000, Score: 1}, // separate moment
+		{docID: 2, Modality: "audio", StartMS: 0, EndMS: 30_000, Score: 1},      // another file
+		{docID: 3, Modality: "text"},
+	}
+	got := mergeMoments(rs)
+	if len(got) != 4 {
+		t.Fatalf("got %d results: %+v", len(got), got)
+	}
+	if got[0].StartMS != 0 || got[0].EndMS != 55_000 || got[0].Modality != "audio+video" || got[0].Span() != "0:00-0:55" {
+		t.Errorf("merged = %+v", got[0])
+	}
+	if got[0].Score != 3 {
+		t.Errorf("merged keeps the best score, got %v", got[0].Score)
+	}
+}

@@ -2,7 +2,7 @@
 
 You are an AI agent (Claude Code or similar) setting ragalay up on the user's computer: download, install, first index, connect it to yourself, and show the user how to use it. Work through the steps in order. Each step ends on a **Done when** line. Reach it before you move on.
 
-ragalay is one program that sits in a folder of documents (Markdown, PDF, images) and makes them searchable by meaning. People use its window. You use its CLI (`--json`) or its MCP server. For what it is and how people use it, see [README.md](README.md). Every command has `--help`. Treat that as the authority for flags.
+ragalay is one program that sits in a folder of documents (Markdown, PDF, images, source code, audio, video) and makes them searchable by meaning. People use its window. You use its CLI (`--json`) or its MCP server. For what it is and how people use it, see [README.md](README.md). Every command has `--help`. Treat that as the authority for flags.
 
 ## Rules for the whole setup
 
@@ -123,6 +123,8 @@ RG scan --json --root "$ROOT"                     # background; a service on ano
 
 Poll `RG status --json --root "$ROOT"` until `queued` is 0, `index.by_status` has no `pending` or `processing`, and `indexing` is absent. A document's chunks are written when the whole file finishes, so a big PDF shows `processing` with 0 chunks for a while. That is normal. Speed: with a GPU, about 0.1 s per PDF page. On the CPU, about 0.3 s per passage and 5 s per PDF page. Searching works while indexing runs.
 
+Video is slow (about 18 minutes per hour of video on a Mac GPU, about 36 on a processor alone; audio is about 2.5 minutes per hour). On a computer without a GPU, with long videos, offer to leave `"video"` out of `kinds` under `[scan]` in `ROOT/.ragalay/config.toml` before scanning. Only EmbeddingGemma 2 reads audio and video; other models skip those files with a note.
+
 On a CPU-only computer with many PDFs, offer to skip page pictures (much faster, but scanned PDFs become unsearchable): set `pdf_page_images = false` under `[index]` in `ROOT/.ragalay/config.toml` before scanning.
 
 **Sending documents away:** if the model is a service that isn't on this computer (anything other than `localhost` / `127.0.0.1`), `scan` stops with an error that says how much would be sent where. Show that message to the user. Add `--yes` only after they agree.
@@ -175,7 +177,7 @@ Keep it short, in plain words, and point to [README.md](README.md) for the rest:
 
 ## Using ragalay as an agent (reference)
 
-- **Search tactics:** the default `hybrid` mode suits questions. Use `--mode keyword` for exact names, codes and numbers, and `--group-by doc` to find *which files* cover a topic. Narrow with `--path-glob "folder/*"` or `--modality text,image,pdf_page`. Run several short, specific searches for different parts of a question rather than one long one.
+- **Search tactics:** the default `hybrid` mode suits questions. Use `--mode keyword` for exact names, codes and numbers, and `--group-by doc` to find *which files* cover a topic. Narrow with `--path-glob "folder/*"` or `--modality text,image,pdf_page,audio,video`. Audio and video hits carry `start_ms`/`end_ms` (`start_ms` is left out when 0): cite them as a time range such as 0:25-0:55. Run several short, specific searches for different parts of a question rather than one long one.
 - **Results:** `--json` prints an array, best first. Fields that are empty are left out. Cite `path` and `page`. A `pdf_page` hit matched the picture of a page and has no `text`, so open the page if you need the words. `paired_path` is a Markdown transcription of the PDF (or the reverse), usually easier to read. `parent_path` is the Markdown file a picture appears in. Scores only rank results.
 - **Notices:** if the index is mid-way through a model switch, `search` still answers and prints `note: …` on stderr (MCP: the `notice` field).
 - **Exit codes:** 0 OK, 1 error, 2 run `RG reembed`, 3 run `RG init`, 4 setup incomplete or a setup question went unanswered, 5 another ragalay is indexing (wait, then retry). Details in [README.md](README.md).

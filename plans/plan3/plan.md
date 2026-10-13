@@ -77,12 +77,12 @@ Notes: line ranges live in `heading_path`. camelCase BM25 splitting and open-at-
 
 **Exit:** met on this Mac with the real model: a folder with two spoken-word recordings (macOS `say`, m4a), an mp4 and a note indexed in 30 s (6 chunks); the query "how do I bake banana bread" returns the banana-bread recording at rank 1, "quarterly budget meeting lighthouse renovation" returns the budget recording at rank 1, and "gardening tomatoes" returns the note.
 
-### Phase 4: Search output and docs
+### Phase 4: Search output and docs ✅ Completed (2026-10-13)
 **Goal:** People and agents see time ranges.
-- [ ] `search` JSON gains `start_ms`/`end_ms`; overlapping frame and audio hits of one video merge (D9).
-- [ ] CLI, TUI and MCP show `mm:ss–mm:ss`.
-- [ ] README and SETUP-FOR-AGENTS: what is read, speed expectations (about 2.5 min per hour of audio, 18–36 min per hour of video), the 30 s window.
-- [ ] Release notes; `go test ./...` passes.
+- [x] `search` JSON gains `start_ms`/`end_ms`; overlapping windows of one file merge (D9), widening to at most two windows so a long video does not collapse into one span; a merged frame+sound hit has modality `audio+video`.
+- [x] CLI, TUI and MCP show `mm:ss–mm:ss`.
+- [x] README and SETUP-FOR-AGENTS: what is read, speed expectations (about 2.5 min per hour of audio, 18–36 min per hour of video), the 30 s window.
+- [x] `go test -short ./...` passes. Release notes are written at release time (Plan 2's `release-notes.md` pattern), not here.
 
 **Exit:** documented, tested, committed; plan archived and tagged `plan3`.
 

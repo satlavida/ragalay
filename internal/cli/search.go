@@ -134,7 +134,7 @@ heading_path, text, paired_path, parent_path}.`,
 	f := cmd.Flags()
 	f.IntVarP(&o.K, "k", "k", 10, "number of results")
 	f.StringVar(&o.Mode, "mode", "hybrid", "hybrid, vector or keyword")
-	f.StringVar(&modality, "modality", "", "only these, comma-separated: text, image, pdf_page")
+	f.StringVar(&modality, "modality", "", "only these, comma-separated: text, image, pdf_page, audio, video")
 	f.StringVar(&o.PathGlob, "path-glob", "", `only paths matching this pattern, e.g. "papers/*.pdf"`)
 	f.StringVar(&groupBy, "group-by", "chunk", "chunk (every passage) or doc (best passage per document)")
 	f.IntVar(&o.MaxChars, "max-chars", 2000, "trim result text to this many characters (-1: no limit)")
@@ -153,6 +153,9 @@ func (a *app) printResults(resp search.Response) {
 		if r.Page > 0 {
 			where += fmt.Sprintf(", page %d", r.Page)
 		}
+		if span := r.Span(); span != "" {
+			where += ", at " + span
+		}
 		fmt.Fprintf(w, "%2d. %s  (%.3f)\n", i+1, where, r.Score)
 		if r.ParentPath != "" {
 			fmt.Fprintf(w, "    image in %s\n", r.ParentPath)
@@ -160,7 +163,7 @@ func (a *app) printResults(resp search.Response) {
 		if r.PairedPath != "" {
 			fmt.Fprintf(w, "    transcription: %s\n", r.PairedPath)
 		}
-		if r.HeadingPath != "" && !strings.HasPrefix(r.HeadingPath, "Page ") {
+		if r.HeadingPath != "" && !strings.HasPrefix(r.HeadingPath, "Page ") && r.Span() == "" {
 			fmt.Fprintf(w, "    %s\n", r.HeadingPath)
 		}
 		if snip := snippet(r.Text, 220); snip != "" {

@@ -908,6 +908,9 @@ func (m Model) viewSearch() string {
 		if r.Page > 0 {
 			where += fmt.Sprintf(" · p.%d", r.Page)
 		}
+		if span := r.Span(); span != "" {
+			where += " · " + span
+		}
 		line := fmt.Sprintf("%2d. %s", i+1, where)
 		sub := firstLine(r.Text, m.width-8)
 		if r.ParentPath != "" {

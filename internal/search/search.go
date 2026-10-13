@@ -19,6 +19,7 @@ import (
 	"github.com/satlavida/ragalay/internal/bm25"
 	"github.com/satlavida/ragalay/internal/config"
 	"github.com/satlavida/ragalay/internal/embed"
+	"github.com/satlavida/ragalay/internal/extract"
 	"github.com/satlavida/ragalay/internal/store"
 )
 
@@ -36,7 +37,7 @@ const rrfK = 60
 type Options struct {
 	K          int      // results to return (default 10)
 	Mode       string   // hybrid (default), vector, keyword
-	Modalities []string // text, image, pdf_page; empty = all
+	Modalities []string // text, image, pdf_page, audio, video; empty = all
 	PathGlob   string   // e.g. "papers/*.pdf"; "*" also matches across folders
 	GroupByDoc bool     // one result per document
 	MaxChars   int      // trim result text (default 2000, <0 = no limit)
@@ -50,6 +51,8 @@ type Result struct {
 	Kind        string  `json:"kind"`
 	Modality    string  `json:"modality"`
 	Page        int     `json:"page,omitempty"`
+	StartMS     int64   `json:"start_ms,omitempty"` // audio and video: the moment the hit covers
+	EndMS       int64   `json:"end_ms,omitempty"`
 	HeadingPath string  `json:"heading_path,omitempty"`
 	Text        string  `json:"text,omitempty"`
 	PairedPath  string  `json:"paired_path,omitempty"`
@@ -149,6 +152,7 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) (Respons
 		return resp, err
 	}
 	resp.Results = mergePairs(resp.Results)
+	resp.Results = mergeMoments(resp.Results)
 	if o.GroupByDoc {
 		resp.Results = groupByDoc(resp.Results)
 	}
@@ -365,14 +369,14 @@ func (s *Searcher) details(ctx context.Context, db *sql.DB, hits []hit) ([]Resul
 	out := make([]Result, 0, len(hits))
 	for _, h := range hits {
 		var r Result
-		var page sql.NullInt64
+		var page, startMS, endMS sql.NullInt64
 		var source, heading, text, pairPath sql.NullString
 		err := db.QueryRowContext(ctx, `SELECT c.document_id, c.modality, c.page, c.heading_path, c.text, c.source_path,
-			d.path, d.kind, coalesce(d.pair_document_id, 0), p.path
+			c.start_ms, c.end_ms, d.path, d.kind, coalesce(d.pair_document_id, 0), p.path
 			FROM chunks c JOIN documents d ON d.id = c.document_id
 			LEFT JOIN documents p ON p.id = d.pair_document_id
 			WHERE c.id = ?`, h.chunkID).Scan(&r.docID, &r.Modality, &page, &heading, &text, &source,
-			&r.Path, &r.Kind, &r.pairID, &pairPath)
+			&startMS, &endMS, &r.Path, &r.Kind, &r.pairID, &pairPath)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
@@ -381,6 +385,7 @@ func (s *Searcher) details(ctx context.Context, db *sql.DB, hits []hit) ([]Resul
 		}
 		r.chunkID, r.Score = h.chunkID, h.score
 		r.Page, r.HeadingPath, r.Text, r.PairedPath = int(page.Int64), heading.String, text.String, pairPath.String
+		r.StartMS, r.EndMS = startMS.Int64, endMS.Int64
 		if source.Valid && source.String != "" && source.String != r.Path {
 			// A linked image: the hit is the image, shown inside its document.
 			r.ParentPath, r.Path, r.Kind = r.Path, source.String, "image"
@@ -444,6 +449,46 @@ func mergePairs(rs []Result) []Result {
 			if _, ok := pagelessMD[r.pairKey]; !ok {
 				pagelessMD[r.pairKey] = i
 			}
+		}
+	}
+	return out
+}
+
+// Span formats the hit's time range as "0:25-0:55", "" when it has none.
+func (r Result) Span() string {
+	if r.EndMS <= r.StartMS {
+		return ""
+	}
+	return extract.Clock(r.StartMS) + "-" + extract.Clock(r.EndMS)
+}
+
+// mergeMoments folds hits of one audio or video file whose time ranges
+// overlap into the best-ranked one, widened to cover both: neighbouring
+// windows overlap by design, and a video's frames and its sound often match
+// the same moment (plan3 D9). A merged hit never spans more than two windows.
+func mergeMoments(rs []Result) []Result {
+	out := make([]Result, 0, len(rs))
+	for _, r := range rs {
+		if r.EndMS <= r.StartMS {
+			out = append(out, r)
+			continue
+		}
+		merged := false
+		for i := range out {
+			o := &out[i]
+			if o.docID == r.docID && o.EndMS > o.StartMS && r.StartMS < o.EndMS && o.StartMS < r.EndMS &&
+				max(o.EndMS, r.EndMS)-min(o.StartMS, r.StartMS) <= 2*extract.WindowMS {
+				o.StartMS, o.EndMS = min(o.StartMS, r.StartMS), max(o.EndMS, r.EndMS)
+				o.HeadingPath = o.Span()
+				if o.Modality != r.Modality {
+					o.Modality = "audio+video"
+				}
+				merged = true
+				break
+			}
+		}
+		if !merged {
+			out = append(out, r)
 		}
 	}
 	return out

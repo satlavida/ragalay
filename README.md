@@ -90,7 +90,13 @@ ragalay  [Search]  Status   Folders    42 documents indexed
 
 **How long indexing takes**: the percentage counts work by size, so a 300-page PDF moves the bar more than a short note. The time left is learned from your own computer and improves as it goes. At the start it says "estimating" until it has timed a few files, and later runs begin with what the last one learned.
 
-**What ragalay reads**: Markdown (`.md`), PDF (including scanned PDFs, which it reads as pictures of the pages), pictures (`.png`, `.jpg`, `.webp`, `.gif`, `.bmp`), and source code (`.go`, `.py`, `.js`, `.ts`, `.rs`, `.java`, `.c`, `.cpp`, `.sh`, `.sql` and many more). Code is read as text and cut into passages of whole lines, and a result names the lines, for example `main.go:40-88`. ragalay skips code files over 1 MB, minified files, lockfiles and `vendor` folders. Folders created before code support keep their old settings: add `"code"` to `kinds` under `[scan]` in `.ragalay/config.toml` to turn it on.
+**What ragalay reads**: Markdown (`.md`), PDF (including scanned PDFs, which it reads as pictures of the pages), pictures (`.png`, `.jpg`, `.webp`, `.gif`, `.bmp`), and source code (`.go`, `.py`, `.js`, `.ts`, `.rs`, `.java`, `.c`, `.cpp`, `.sh`, `.sql` and many more). Code is read as text and cut into passages of whole lines, and a result names the lines, for example `main.go:40-88`. ragalay skips code files over 1 MB, minified files, lockfiles and `vendor` folders. 
+
+**Audio and video**: ragalay also reads sound (`.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`, `.aac`, `.opus`, `.wma`) and video (`.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.m4v`). It cuts each file into overlapping 30-second pieces and indexes what each piece sounds and looks like, so you can search for something said in a recording or shown in a video. A video's pictures and its sound are indexed separately, and a result gives the time range, for example `at 0:25-0:55`. This works with **EmbeddingGemma 2** (the default). With other models, audio and video files are skipped with a note, and switching to EmbeddingGemma 2 picks them up. It does not write a transcript: it matches your words against the sound's meaning, so it finds topics well and exact quotes less well.
+
+How long it takes, measured on a MacBook with an M3 Pro: about 2.5 minutes per hour of audio, and about 18 minutes per hour of video on the GPU (about 36 on the processor alone). ragalay indexes text first and video last, so search is useful early.
+
+**Folders created before code, audio and video support** keep their old settings: add `"code"`, `"audio"` and `"video"` to `kinds` under `[scan]` in `.ragalay/config.toml` to turn them on. Run `ragalay setup` once more so it can install the small decoder that audio and video need.
 
 **Pictures in Markdown files**: keep the pictures a Markdown file shows **in the same folder as the Markdown file** (or a subfolder such as `images/` or `assets/`). ragalay then indexes each picture together with its caption and the heading it sits under, and search results say which file it appears in.
 
@@ -245,7 +251,9 @@ A JSON array, most relevant first:
 
 Fields that are empty are left out (here `heading_path` and `parent_path`). If the index is partway through a model switch, a `note: …` line on stderr explains which model the results come from.
 
-- `modality` is `text`, `image` or `pdf_page` (a page matched as a picture; `text` is empty, cite the page).
+- `modality` is `text`, `image`, `pdf_page` (a page matched as a picture; `text` is empty, cite the page), `audio`, `video`, or `audio+video` (a video's pictures and sound matched the same moment).
+- `start_ms` and `end_ms` give the matching time range of an audio or video file in milliseconds; `start_ms` is left out when it is 0. `heading_path` shows the same range as `m:ss-m:ss`. Cite it as a time range.
+- For source code, `heading_path` is `file.go:40-88`, the line range of the passage.
 - `parent_path` is set for pictures inside a Markdown file (`path` is the picture).
 - `paired_path` is the Markdown transcription of a PDF (or the PDF of a transcription).
 - Scores are for ordering only (reciprocal rank fusion in hybrid mode).
@@ -293,7 +301,7 @@ The search model stays loaded for the session, so searches after the first take 
 folders = []                 # relative folders to index; empty = everything
 keep = []                    # folders no longer scanned whose documents stay searchable
 ignore = ["**/node_modules/**", "**/.git/**"]
-kinds = ["md", "pdf", "image"]
+kinds = ["md", "pdf", "image", "code", "audio", "video"]
 
 [[pairs]]                    # optional: Markdown transcriptions ↔ PDFs
 md = "transcripts"
