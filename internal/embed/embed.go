@@ -17,15 +17,19 @@ const (
 	Text    = "text"
 	Image   = "image"
 	PDFPage = "pdf_page"
+	Audio   = "audio"
+	Video   = "video"
 )
 
 // Input is one thing to embed as a document.
 type Input struct {
 	Modality string `json:"modality"`
-	Text     string `json:"text,omitempty"`  // text, or the caption for a combined text+image input
-	Path     string `json:"path,omitempty"`  // image or PDF file
-	Page     int    `json:"page,omitempty"`  // 0-based page for pdf_page
-	Title    string `json:"title,omitempty"` // file name + heading path, for title prompts
+	Text     string `json:"text,omitempty"`     // text, or the caption for a combined text+image input
+	Path     string `json:"path,omitempty"`     // image or PDF file
+	Page     int    `json:"page,omitempty"`     // 0-based page for pdf_page
+	Title    string `json:"title,omitempty"`    // file name + heading path, for title prompts
+	StartMS  int64  `json:"start_ms,omitempty"` // audio and video: the window to embed
+	EndMS    int64  `json:"end_ms,omitempty"`
 }
 
 // Indexer embeds documents (any modality). Used only while indexing.

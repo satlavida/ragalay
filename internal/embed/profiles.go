@@ -61,7 +61,7 @@ var profiles = []Profile{
 	{
 		Name: Gemma2, Title: "EmbeddingGemma 2",
 		License: "Apache 2.0", LicenseURL: "https://www.apache.org/licenses/LICENSE-2.0",
-		Modalities: []string{Text, Image, PDFPage},
+		Modalities: []string{Text, Image, PDFPage, Audio, Video},
 		Dims:       []int{768, 512, 256, 128}, DefaultDim: 768,
 		IndexModel: "google/embeddinggemma-2", IndexRevision: "914f7f89142e33e77833254d9c9b90c3cef7303b",
 		QueryPrefix: "task: search result | query: ", Pooling: PoolMean,

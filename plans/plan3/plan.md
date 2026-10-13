@@ -49,15 +49,15 @@ Not yet checked: Windows and Linux decoding; Jina; audio extraction from a video
 
 Notes: line ranges live in `heading_path`. camelCase BM25 splitting and open-at-line move to Plan 7.
 
-### Phase 1: Foundations (schema, kinds, profile)
+### Phase 1: Foundations (schema, kinds, profile) ✅ Completed (2026-10-13)
 **Goal:** The index and scanner know about audio and video; nothing is embedded yet.
-- [ ] Schema v4 migration with `start_ms`, `end_ms`; shadow DDL and store tests (fresh DB and upgrade from v3).
-- [ ] `ChunkRow` and `ReplaceChunks` carry the times; `embed.Audio` and `embed.Video` modalities; `embed.Input` gets `StartMS`, `EndMS`; Gemma 2 profile lists both.
-- [ ] Scan kinds `audio`, `video`, extension tables, config `supportedKinds` and defaults; job order (D7).
-- [ ] Runner: a media job on a profile without the modality finishes with a note, not a failure.
-- [ ] Plan 6 cost: media jobs cost seconds (size-based guess until probed); default rates.
+- [x] Schema v4 migration with `start_ms`, `end_ms`; shadow DDL and store tests (fresh DB and upgrade from v3).
+- [x] `ChunkRow` and `ReplaceChunks` carry the times; `embed.Audio` and `embed.Video` modalities; `embed.Input` gets `StartMS`, `EndMS`; Gemma 2 profile lists both.
+- [x] Scan kinds `audio`, `video`, extension tables, config `supportedKinds` and defaults; job order (D7).
+- [x] Runner: a media job on a profile without the modality finishes with a note, not a failure.
+- [x] Plan 6 cost: media jobs cost seconds (size-based guess until probed); default rates.
 
-**Exit:** `go test ./...` passes; an upgraded v3 index opens; a media file on the Jina or `openai` profile is marked done with the note.
+**Exit:** `go test -short ./...` passes; an upgraded v3 index opens; a media file on the Jina or `openai` profile is marked done with the note.
 
 ### Phase 2: Sidecar decoding and embedding
 **Goal:** The Python helper probes media and embeds windows.

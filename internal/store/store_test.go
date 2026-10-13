@@ -115,3 +115,75 @@ func TestIsLocked(t *testing.T) {
 		t.Error("false positive")
 	}
 }
+
+func TestMigrateV3ToV4AddsTimeColumns(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "index.db")
+	err := With(ctx, path, func(db *sql.DB) error {
+		// Build a schema-3 database by running the first three migrations.
+		for v := 0; v < 3; v++ {
+			if err := Tx(ctx, db, func(tx *sql.Tx) error {
+				if err := migrations[v](ctx, tx, 8); err != nil {
+					return err
+				}
+				return SetMeta(ctx, tx, "schema_version", string(rune('1'+v)))
+			}); err != nil {
+				return err
+			}
+		}
+		if err := Migrate(ctx, db, 8); err != nil {
+			return err
+		}
+		var n int
+		if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('chunks') WHERE name IN ('start_ms', 'end_ms')`).Scan(&n); err != nil {
+			return err
+		}
+		if n != 2 {
+			t.Errorf("start_ms/end_ms columns = %d, want 2", n)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReplaceChunksStoresTimeRange(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "index.db")
+	err := With(ctx, path, func(db *sql.DB) error {
+		if err := Migrate(ctx, db, 2); err != nil {
+			return err
+		}
+		return Tx(ctx, db, func(tx *sql.Tx) error {
+			id, err := InsertDocument(ctx, tx, Document{Path: "a.wav", Kind: "audio", SHA256: "x", Size: 1, MTime: 1})
+			if err != nil {
+				return err
+			}
+			rows := []ChunkRow{
+				{Modality: "audio", HeadingPath: "0:00-0:30", StartMS: 0, EndMS: 30000, Vector: []float32{1, 0}},
+				{Modality: "text", Text: "plain", Vector: []float32{0, 1}},
+			}
+			if err := ReplaceChunks(ctx, tx, id, rows); err != nil {
+				return err
+			}
+			var s, e sql.NullInt64
+			if err := tx.QueryRowContext(ctx, `SELECT start_ms, end_ms FROM chunks WHERE ord = 0`).Scan(&s, &e); err != nil {
+				return err
+			}
+			if !s.Valid || s.Int64 != 0 || e.Int64 != 30000 {
+				t.Errorf("audio chunk range = %v-%v", s, e)
+			}
+			if err := tx.QueryRowContext(ctx, `SELECT start_ms FROM chunks WHERE ord = 1`).Scan(&s); err != nil {
+				return err
+			}
+			if s.Valid {
+				t.Error("a text chunk should have no time range")
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

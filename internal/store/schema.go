@@ -10,7 +10,7 @@ import (
 
 // SchemaVersion is the schema this binary writes. Migrations upgrade older
 // databases step by step; a newer database is refused.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // migrations[i] upgrades from version i to i+1. The chunks table depends on
 // the embedding dimension, so steps get it as a parameter.
@@ -18,6 +18,21 @@ var migrations = []func(ctx context.Context, tx *sql.Tx, dim int) error{
 	migrateV1,
 	migrateV2,
 	migrateV3,
+	migrateV4,
+}
+
+// migrateV4 (plan3 Phase 1): audio and video chunks carry the time range
+// they cover, in milliseconds.
+func migrateV4(ctx context.Context, tx *sql.Tx, dim int) error {
+	for _, s := range []string{
+		`ALTER TABLE chunks ADD COLUMN start_ms INTEGER`,
+		`ALTER TABLE chunks ADD COLUMN end_ms INTEGER`,
+	} {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("%w\n%s", err, s)
+		}
+	}
+	return nil
 }
 
 // migrateV3 (plan2 Phase 3): documents changed during a model switch, so
@@ -140,7 +155,9 @@ func chunksTableDDL(name string, dim int) string {
 		token_count INTEGER NOT NULL DEFAULT 0,
 		embedding F32_BLOB(%d),
 		source_path TEXT,
-		bm25_len INTEGER NOT NULL DEFAULT 0)`, name, dim)
+		bm25_len INTEGER NOT NULL DEFAULT 0,
+		start_ms INTEGER,
+		end_ms INTEGER)`, name, dim)
 }
 
 // Version returns the database's schema version, 0 for an empty database.

@@ -271,3 +271,34 @@ func TestInterruptedRunResumes(t *testing.T) {
 		t.Fatalf("resumed run: %+v %v", sum, err)
 	}
 }
+
+func TestMediaSkippedWhenModelCannotReadIt(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, config.DirName), 0o755)
+	cfg := config.Default()
+	cfg.Embed, _ = cfg.Embed.UseProfile(embed.JinaV5, 1024) // no audio or video tower
+	config.Save(root, cfg)
+	ctx := context.Background()
+	if err := store.With(ctx, dbPath(root), func(db *sql.DB) error { return store.Migrate(ctx, db, 1024) }); err != nil {
+		t.Fatal(err)
+	}
+	put(t, root, "talk.mp3", []byte("not really audio"))
+	put(t, root, "clip.mp4", []byte("not really video"))
+	if _, err := scan.Run(ctx, root, cfg); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeEmbedder{}
+	sum, err := runner(root, cfg, f).Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Skipped != 2 || sum.Failed != 0 || f.calls.Load() != 0 {
+		t.Fatalf("summary %+v, embed calls %d", sum, f.calls.Load())
+	}
+	d := docsByPath(t, root)
+	for _, p := range []string{"talk.mp3", "clip.mp4"} {
+		if d[p].Status != store.StatusDone || !strings.Contains(d[p].Error, "cannot read") {
+			t.Errorf("%s: status %s, note %q", p, d[p].Status, d[p].Error)
+		}
+	}
+}

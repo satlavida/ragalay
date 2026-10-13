@@ -67,7 +67,7 @@ func TestLoadRejectsUnknownKeys(t *testing.T) {
 func TestValidateCollectsAllErrors(t *testing.T) {
 	cfg := Default()
 	cfg.Scan.Folders = []string{"../outside", `docs\win`, "/abs"}
-	cfg.Scan.Kinds = []string{"md", "video"}
+	cfg.Scan.Kinds = []string{"md", "spreadsheet"}
 	cfg.Chunk.Overlap = 300
 	cfg.Embed.Dim = 1000
 	cfg.Pairs = []Pair{{MD: "md"}}
@@ -75,7 +75,7 @@ func TestValidateCollectsAllErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected errors")
 	}
-	for _, want := range []string{"../outside", `docs\\win`, "/abs", "video", "chunk.overlap", "embed.dim", "pairs[0]"} {
+	for _, want := range []string{"../outside", `docs\\win`, "/abs", "spreadsheet", "chunk.overlap", "embed.dim", "pairs[0]"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q:\n%v", want, err)
 		}

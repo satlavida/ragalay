@@ -13,9 +13,11 @@ import (
 // Plan 6: progress is counted in work units so a 400-page PDF weighs more
 // than a note. Seconds per unit are learned per kind and kept in meta.
 const (
-	textUnitBytes = 4 << 10  // one unit of text or code
-	pdfPageBytes  = 80 << 10 // rough size of a PDF page, until real pages are known
-	warmDocs      = 3        // documents of a kind before its rate is trusted
+	textUnitBytes = 4 << 10   // one unit of text or code
+	pdfPageBytes  = 80 << 10  // rough size of a PDF page, until real pages are known
+	audioBytesSec = 16 << 10  // rough bytes per second of compressed audio (128 kbit/s)
+	videoBytesSec = 256 << 10 // rough bytes per second of video (2 Mbit/s); media units are seconds
+	warmDocs      = 3         // documents of a kind before its rate is trusted
 	rateMetaKey   = "eta_rate_"
 )
 
@@ -25,6 +27,8 @@ var defaultRate = map[string]float64{
 	scan.KindCode:     0.3,
 	scan.KindPDF:      1,
 	scan.KindImage:    1,
+	scan.KindAudio:    0.05, // seconds of work per second of audio
+	scan.KindVideo:    0.5,
 }
 
 // cost returns the work units of a job (at least 1).
@@ -35,6 +39,10 @@ func cost(j store.Job) float64 {
 		return 1
 	case scan.KindPDF:
 		per = pdfPageBytes
+	case scan.KindAudio:
+		per = audioBytesSec
+	case scan.KindVideo:
+		per = videoBytesSec
 	}
 	return max(1, float64(j.Size)/float64(per))
 }

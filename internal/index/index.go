@@ -119,7 +119,8 @@ type Progress struct {
 type Summary struct {
 	Indexed  int           `json:"indexed"`
 	Failed   int           `json:"failed"`
-	Linked   int           `json:"linked"` // images indexed as part of a Markdown file
+	Linked   int           `json:"linked"`            // images indexed as part of a Markdown file
+	Skipped  int           `json:"skipped,omitempty"` // audio or video the model cannot read
 	Chunks   int           `json:"chunks"`
 	Requeued int64         `json:"requeued"`
 	Switched bool          `json:"switched,omitempty"` // a model switch finished and search now uses it
@@ -230,6 +231,17 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 				continue
 			}
 		}
+		// A model without an audio or video tower cannot index media. The file
+		// is done with a note, and a model switch queues it again.
+		if need := mediaModality(job.Kind); need != "" && !slices.Contains(r.Cfg.Embed.Modalities(), need) {
+			note := fmt.Sprintf("skipped: this model cannot read %s; switch to EmbeddingGemma 2 (ragalay model use embeddinggemma-2)", need)
+			if err := r.finish(ctx, job, nil, nil, space, note); err != nil {
+				return sum, err
+			}
+			sum.Skipped++
+			doneUnits += cost(job)
+			continue
+		}
 		if err := r.claim(ctx, job.ID); err != nil {
 			return sum, err
 		}
@@ -287,6 +299,17 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 		return sum, ctx.Err()
 	}
 	return sum, nil
+}
+
+// mediaModality is the modality a media document needs, "" for other kinds.
+func mediaModality(kind string) string {
+	switch kind {
+	case scan.KindAudio:
+		return embed.Audio
+	case scan.KindVideo:
+		return embed.Video
+	}
+	return ""
 }
 
 // finishSwitch swaps a finished model switch in (S1). It reports whether it

@@ -20,6 +20,8 @@ const (
 	KindPDF      = "pdf"
 	KindImage    = "image"
 	KindCode     = "code"
+	KindAudio    = "audio"
+	KindVideo    = "video"
 )
 
 // extensions maps file extensions to (config kind, document kind).
@@ -40,6 +42,12 @@ var extensions = map[string][2]string{
 const MaxCodeBytes = 1 << 20
 
 func init() {
+	for _, e := range strings.Fields(".wav .mp3 .flac .ogg .oga .m4a .aac .opus .wma") {
+		extensions[e] = [2]string{"audio", KindAudio}
+	}
+	for _, e := range strings.Fields(".mp4 .mov .mkv .avi .webm .m4v") {
+		extensions[e] = [2]string{"video", KindVideo}
+	}
 	for _, e := range strings.Fields(`.go .py .js .mjs .cjs .jsx .ts .tsx .rs .java .kt .kts .scala .c .h .cc .cpp .cxx .hpp
 		.cs .rb .php .swift .m .sh .bash .zsh .ps1 .sql .lua .r .dart .ex .exs .erl .hs .ml .clj .vue .svelte
 		.css .scss .html .toml .yaml .yml .proto .tf .gradle .zig .nim .jl`) {

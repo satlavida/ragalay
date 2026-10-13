@@ -20,6 +20,8 @@ type ChunkRow struct {
 	Page        int
 	Tokens      int
 	SourcePath  string // linked image file, when it is not the document itself
+	StartMS     int64  // audio and video: the time range this chunk covers
+	EndMS       int64
 	Vector      []float32
 }
 
@@ -54,8 +56,8 @@ func ReplaceChunks(ctx context.Context, tx *sql.Tx, docID int64, rows []ChunkRow
 		return err
 	}
 	ins, err := tx.PrepareContext(ctx, `INSERT INTO `+t.Chunks+`
-		(document_id, ord, modality, text, heading_path, page, token_count, embedding, source_path, bm25_len)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		(document_id, ord, modality, text, heading_path, page, token_count, embedding, source_path, bm25_len, start_ms, end_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -67,7 +69,7 @@ func ReplaceChunks(ctx context.Context, tx *sql.Tx, docID int64, rows []ChunkRow
 		for _, c := range tf {
 			n += c
 		}
-		var page, source, vector any
+		var page, source, vector, startMS, endMS any
 		if r.Page > 0 {
 			page = r.Page
 		}
@@ -77,8 +79,11 @@ func ReplaceChunks(ctx context.Context, tx *sql.Tx, docID int64, rows []ChunkRow
 		if r.Vector != nil {
 			vector = embed.Blob(r.Vector)
 		}
+		if r.EndMS > 0 {
+			startMS, endMS = r.StartMS, r.EndMS
+		}
 		res, err := ins.ExecContext(ctx, docID, ord, r.Modality, r.Text, r.HeadingPath, page, r.Tokens,
-			vector, source, n)
+			vector, source, n, startMS, endMS)
 		if err != nil {
 			return err
 		}
@@ -152,7 +157,7 @@ type Job struct {
 const MaxAttempts = 3
 
 // QueuedJobsInOrder returns waiting jobs, text first so search is useful
-// soon: Markdown, code, PDFs, then images (plan1 §4.4).
+// soon: Markdown, code, PDFs, images, audio, then video (plan1 §4.4).
 func QueuedJobsInOrder(ctx context.Context, db *sql.DB) ([]Job, error) {
 	rows, err := db.QueryContext(ctx, `SELECT d.id, d.path, d.kind, coalesce(d.sha256, ''), coalesce(d.size, 0),
 		coalesce(d.mtime, 0), d.status, coalesce(d.error, ''), d.chunk_count, coalesce(d.pair_document_id, 0),
@@ -160,7 +165,7 @@ func QueuedJobsInOrder(ctx context.Context, db *sql.DB) ([]Job, error) {
 		FROM jobs j JOIN documents d ON d.id = j.document_id
 		LEFT JOIN documents p ON p.id = d.pair_document_id
 		WHERE j.state = 'queued'
-		ORDER BY CASE d.kind WHEN 'markdown' THEN 0 WHEN 'code' THEN 1 WHEN 'pdf' THEN 2 ELSE 3 END, j.enqueued_at, d.path`)
+		ORDER BY CASE d.kind WHEN 'markdown' THEN 0 WHEN 'code' THEN 1 WHEN 'pdf' THEN 2 WHEN 'image' THEN 3 WHEN 'audio' THEN 4 ELSE 5 END, j.enqueued_at, d.path`)
 	if err != nil {
 		return nil, err
 	}
