@@ -20,6 +20,21 @@
 - Opening a hit at its line in an editor is not done yet.
 - Needs no new model, so it can ship before audio and video.
 
+## Phase 0 findings (2026-10-13, Gemma 2 only, Apple M3 Pro, 5 CPU threads / MPS)
+
+Scratch scripts were run from the session scratchpad, not committed. Jina was **not** tested: it is a 4.9 GB download under a non-commercial license, so it needs the user's go-ahead.
+
+| Q | Finding |
+|---|---|
+| Q1 max clip | **Audio is silently cut at 30 s** (750 tokens). The model card says ~327 s, but the processor drops the rest: 60 s and 120 s clips still give 750 tokens. Windows must be **≤ 30 s** (keep the 30 s / 5 s overlap default). Video: 140 tokens/frame, default cap 32 frames at 1 fps, so a window is **≤ 32 s**. |
+| Q2 speed | Audio, 30 s window: ~1.2 s on CPU and ~1 s on MPS, so an hour of audio is ~2.5 min. Video, per frame: ~0.6 s on CPU, ~0.3 s on MPS (240p frames), so an hour of video at 1 fps is ~36 min on CPU and ~18 min on MPS. Audio is cheap on every device; video is the cost. Video must be scheduled after everything else, and its cost unit in Plan 6's model is frames. |
+| Q4 decoding | PyAV 18.1 installs and decodes H.264 on macOS arm64. Windows and Linux are untested. The model library asks for `torchcodec` for video paths, which can be avoided: pass frames decoded by PyAV as a numpy array (worked). |
+| Q5 profiles | Gemma 2: yes to audio and video (above). Jina: untested. `openai` profile stays text and image only. |
+| Deps | Audio input through sentence-transformers needs `librosa` (pulls numba, scipy, scikit-learn); `av`, `soundfile`, `librosa` and their dependencies are ~320 MB extra in the Python environment. To check in the build phase: pass a decoded numpy array for audio and drop `librosa`. Setup must install these only when a folder enables audio or video. |
+| Sidecar | `sidecar.py` loads Gemma with `audio_config: None`; media needs the audio encoder (+570M parameters in memory) and the vision encoder loaded together. Loading it only when a media job exists keeps text indexing light. |
+
+Open still: Q3 (embed a video's audio track separately: not tested, recommended yes since 30 s of audio costs ~1 s), Jina results, Windows and Linux decoding.
+
 ## Schema changes
 - `documents.kind` gains `code` (no schema change; the column is free text).
 - `chunks` gains `start_ms`, `end_ms`. `documents.kind` gains `audio | video`. `modality` gains `audio | video`.
@@ -32,7 +47,7 @@
 5. Plan 2 makes EmbeddingGemma 2 the default. It has its own audio encoder (25 tokens/s) and video sampling (1 fps), so Q1–Q3 need answers per profile (Gemma, Jina), and external providers stay text/image-only.
 
 ## Phases (draft)
-- Phase 0: spikes on Q1–Q5 (user chose this over a transcription-only design; if native audio/video is too slow or unsupported on a profile, fall back to Whisper transcripts indexed as timestamped text for that profile)
+- Phase 0 (Gemma 2 half done 2026-10-13, see findings): spikes on Q1–Q5 (user chose this over a transcription-only design; if native audio/video is too slow or unsupported on a profile, fall back to Whisper transcripts indexed as timestamped text for that profile)
 - Phase A: code files ✅ Done (2026-10-13), shipped ahead of the media phases
 - Phase 1: audio windowing + ingest
 - Phase 2: video windowing + ingest
