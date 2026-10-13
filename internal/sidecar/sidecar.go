@@ -263,6 +263,13 @@ func (c *Client) EmbedDocuments(ctx context.Context, in []embed.Input) ([][]floa
 	return decodeAll(res.Vectors)
 }
 
+// Probe implements embed.Prober.
+func (c *Client) Probe(ctx context.Context, path string) (embed.MediaInfo, error) {
+	var info embed.MediaInfo
+	err := c.Call(ctx, "probe", map[string]any{"path": path}, &info)
+	return info, err
+}
+
 // EmbedQuery embeds a query with the indexing model. Search uses llama.cpp
 // instead; this exists for the setup self-test and query-by-example.
 func (c *Client) EmbedQuery(ctx context.Context, in embed.Input) ([]float32, error) {

@@ -100,6 +100,7 @@ var pythonPackages = []string{
 	"pillow==12.3.0",
 	"pypdfium2==5.14.0",
 	"numpy==2.4.6",
+	"av==18.1.0", // audio and video decoding (plan3); bundles FFmpeg
 }
 
 // Variant is a torch build for one kind of accelerator.

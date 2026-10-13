@@ -57,6 +57,8 @@ func TestHelperSidecar(t *testing.T) {
 				vs = append(vs, base64.StdEncoding.EncodeToString(embed.Blob(v)))
 			}
 			send(map[string]any{"id": req.ID, "result": map[string]any{"vectors": vs}})
+		case "probe":
+			send(map[string]any{"id": req.ID, "result": map[string]any{"duration_ms": 70000, "has_audio": true, "has_video": false}})
 		case "slow":
 			time.Sleep(time.Minute)
 		case "shutdown":
@@ -168,5 +170,21 @@ func TestStartFailures(t *testing.T) {
 func TestScriptIsEmbedded(t *testing.T) {
 	if !strings.Contains(string(Script), "def serve(") {
 		t.Fatal("sidecar.py not embedded")
+	}
+}
+
+func TestProbeAndMediaInputs(t *testing.T) {
+	c, err := Start(context.Background(), fakeOpts(t, "ok"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	info, err := c.Probe(context.Background(), "talk.mp3")
+	if err != nil || info.DurationMS != 70000 || !info.HasAudio || info.HasVideo {
+		t.Fatalf("probe = %+v, %v", info, err)
+	}
+	vs, err := c.EmbedDocuments(context.Background(), []embed.Input{{Modality: embed.Audio, Path: "talk.mp3", StartMS: 0, EndMS: 30000}})
+	if err != nil || len(vs) != 1 {
+		t.Fatalf("embed audio window: %v %v", vs, err)
 	}
 }

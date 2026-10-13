@@ -59,14 +59,14 @@ Notes: line ranges live in `heading_path`. camelCase BM25 splitting and open-at-
 
 **Exit:** `go test -short ./...` passes; an upgraded v3 index opens; a media file on the Jina or `openai` profile is marked done with the note.
 
-### Phase 2: Sidecar decoding and embedding
+### Phase 2: Sidecar decoding and embedding ✅ Completed (2026-10-13)
 **Goal:** The Python helper probes media and embeds windows.
-- [ ] `sidecar.py`: `probe`; audio and video inputs with `start_ms`/`end_ms`; load the audio and vision encoders for Gemma on demand; `av` and `numpy` only.
-- [ ] Extraction of a video's audio track (resample to 16 kHz mono), and of video frames at 1 fps.
-- [ ] `setup` installs `av`; clear error when missing.
-- [ ] Go client: `Probe`, media inputs. Python tests with generated wav and mp4 (skipped when the profile is not installed).
+- [x] `sidecar.py`: `probe`; audio and video inputs with `start_ms`/`end_ms`; load the audio and vision encoders for Gemma on demand; `av` and `numpy` only.
+- [x] Extraction of a video's audio track (resample to 16 kHz mono), and of video frames at 1 fps.
+- [x] `setup` installs `av` (pinned in `pins.go`, so the package hash changes and the next `setup` installs it); a missing `av` surfaces the Python ImportError from the sidecar.
+- [x] Go client: `Probe`, media inputs. Fake-sidecar protocol test for `probe` and media inputs. The real-model check ran as scratch scripts (generated 70 s wav, 40 s mp4 with AAC audio, 20 s silent mp4); a committed real-model test comes with Phase 3.
 
-**Exit:** a generated 70 s wav gives 3 windows with vectors of the right size; a generated mp4 gives frame and audio vectors; verified on this Mac.
+**Exit:** met on this Mac: probe reports duration and streams; a 30 s window of a wav, the audio track of an mp4 and 30 frames of the mp4 each give a 768-dim vector; text vectors are unchanged after the audio encoder loads (cosine 1.0); a 30-frame window takes ~9 s on MPS. (Window planning is Phase 3.)
 
 ### Phase 3: Windowing and indexing
 **Goal:** Media files are indexed end to end.

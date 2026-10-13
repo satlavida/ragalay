@@ -32,6 +32,19 @@ type Input struct {
 	EndMS    int64  `json:"end_ms,omitempty"`
 }
 
+// MediaInfo describes an audio or video file, for planning its windows.
+type MediaInfo struct {
+	DurationMS int64 `json:"duration_ms"`
+	HasAudio   bool  `json:"has_audio"`
+	HasVideo   bool  `json:"has_video"`
+}
+
+// Prober reads media metadata. The indexing runtime implements it (decoding
+// is Python's job, plan3 D3).
+type Prober interface {
+	Probe(ctx context.Context, path string) (MediaInfo, error)
+}
+
 // Indexer embeds documents (any modality). Used only while indexing.
 type Indexer interface {
 	EmbedDocuments(ctx context.Context, in []Input) ([][]float32, error)

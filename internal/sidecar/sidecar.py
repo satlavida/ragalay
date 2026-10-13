@@ -57,8 +57,9 @@ class Embedder:
         self.gemma = "embeddinggemma" in model.lower()
         if self.gemma:
             # EmbeddingGemma 2 (plan2 §3.1): no remote code; bf16 or fp32,
-            # never fp16. The audio encoder is not loaded until audio is
-            # indexed (Plan 3); text vectors are identical without it.
+            # never fp16. The audio encoder is not loaded until the first
+            # audio or video input (media_model); text vectors are identical
+            # without it.
             bf16 = device == "cuda" and torch.cuda.is_bf16_supported()
             dtype = torch.bfloat16 if bf16 else torch.float32
             self.model = SentenceTransformer(
@@ -74,6 +75,8 @@ class Embedder:
                 model, trust_remote_code=True, device=device, revision=revision,
                 local_files_only=True).to(dtype)
         self.device, self.dtype, self.max_side = device, str(dtype).replace("torch.", ""), max_side
+        self.model_args = (model, revision, dtype)
+        self.has_media = False
         self.info = {
             "model": model, "revision": revision, "device": device, "dtype": self.dtype,
             "dim": self.model.get_embedding_dimension(),
@@ -119,7 +122,50 @@ class Embedder:
             im.load()
             return self.bucket(im)
 
+    def media_model(self):
+        """Gemma 2 with its audio encoder (plan3 D3). Loaded on the first
+        audio or video input and kept for the rest of the run; the text
+        vectors do not change."""
+        if not self.gemma:
+            raise ValueError("this model cannot read audio or video; use EmbeddingGemma 2")
+        if not self.has_media:
+            import gc
+            from sentence_transformers import SentenceTransformer
+
+            model, revision, dtype = self.model_args
+            self.model = None
+            gc.collect()
+            self.model = SentenceTransformer(
+                model, device=self.device, revision=revision, local_files_only=True,
+                model_kwargs={"dtype": dtype})
+            self.model.max_seq_length = 8192
+            self.has_media = True
+        return self.model
+
+    def encode_media(self, items):
+        """One vector per audio or video window. Python decodes with PyAV:
+        audio becomes 16 kHz mono float32, video becomes frames at 1 per
+        second (plan3 D2/D3). Media goes in without a prompt prefix."""
+        model = self.media_model()
+        out = []
+        for it in items:
+            if it["modality"] == "audio":
+                x = {"audio": decode_audio(it["path"], it.get("start_ms", 0), it.get("end_ms", 0))}
+            else:
+                x = {"video": decode_frames(it["path"], it.get("start_ms", 0), it.get("end_ms", 0), self.max_side)}
+            out.append(model.encode(x, normalize_embeddings=True))
+        return out
+
     def encode(self, items, query=False):
+        media = [(i, it) for i, it in enumerate(items) if it["modality"] in ("audio", "video")]
+        if media:
+            vecs = self.encode_media([it for _, it in media])
+            rest = [it for it in items if it["modality"] not in ("audio", "video")]
+            rest_vecs = self.encode(rest, query) if rest else []
+            out, ri, mi = [], iter(rest_vecs), iter(b64(v) for v in vecs)
+            for it in items:
+                out.append(next(mi) if it["modality"] in ("audio", "video") else next(ri))
+            return out
         if self.gemma:
             return [b64(v) for v in self.encode_gemma(items, query)]
         enc = self.model.encode_query if query else self.model.encode_document
@@ -168,6 +214,86 @@ class Embedder:
         return out
 
 
+SAMPLE_RATE = 16000
+
+
+def decode_audio(path, start_ms, end_ms):
+    """Mono 16 kHz float32 samples of [start_ms, end_ms) of the first audio
+    stream (end_ms 0 = to the end), capped at the model's 30 s."""
+    import av
+    import numpy as np
+
+    limit = int(SAMPLE_RATE * 30)
+    start, want = start_ms / 1000.0, (end_ms - start_ms) / 1000.0 if end_ms > start_ms else 30.0
+    want = min(want, 30.0)
+    with av.open(path) as c:
+        if not c.streams.audio:
+            raise ValueError("the file has no audio track")
+        stream = c.streams.audio[0]
+        if start > 0:
+            c.seek(int(start * av.time_base))
+        rs = av.AudioResampler(format="flt", layout="mono", rate=SAMPLE_RATE)
+        chunks, n, skip = [], 0, None
+        for frame in c.decode(stream):
+            if skip is None:
+                # Seeking lands on a keyframe before start; drop the lead-in.
+                skip = max(0, int((start - float(frame.time or 0)) * SAMPLE_RATE)) if start > 0 else 0
+            for f in rs.resample(frame) or []:
+                chunks.append(f.to_ndarray().reshape(-1))
+                n += len(chunks[-1])
+            if n - skip >= want * SAMPLE_RATE:
+                break
+        for f in rs.resample(None) or []:
+            chunks.append(f.to_ndarray().reshape(-1))
+    if not chunks:
+        raise ValueError("no audio could be decoded")
+    x = np.concatenate(chunks)[skip or 0:]
+    return np.ascontiguousarray(x[: min(int(want * SAMPLE_RATE), limit)], dtype="float32")
+
+
+def decode_frames(path, start_ms, end_ms, max_side):
+    """Frames at 1 per second from [start_ms, end_ms), at most 32, each
+    scaled to fit max_side, as one (frames, height, width, 3) uint8 array."""
+    import av
+    import numpy as np
+
+    start = start_ms / 1000.0
+    end = end_ms / 1000.0 if end_ms > start_ms else start + 32.0
+    with av.open(path) as c:
+        if not c.streams.video:
+            raise ValueError("the file has no video track")
+        stream = c.streams.video[0]
+        if start > 0:
+            c.seek(int(start * av.time_base), stream=stream)
+        frames, nxt = [], start
+        for frame in c.decode(stream):
+            t = float(frame.time or 0)
+            if t < nxt:
+                continue
+            if t >= end or len(frames) >= 32:
+                break
+            scale = min(1.0, max_side / max(frame.width, frame.height))
+            w, h = max(2, int(frame.width * scale) // 2 * 2), max(2, int(frame.height * scale) // 2 * 2)
+            frames.append(frame.reformat(width=w, height=h, format="rgb24").to_ndarray())
+            nxt += 1.0
+    if not frames:
+        raise ValueError("no video frames could be decoded")
+    return np.stack(frames)
+
+
+def probe(path):
+    """Duration and streams of a media file, for window planning."""
+    import av
+
+    with av.open(path) as c:
+        dur = c.duration / av.time_base if c.duration else 0.0
+        if not dur:
+            for s in list(c.streams.video) + list(c.streams.audio):
+                if s.duration and s.time_base:
+                    dur = max(dur, float(s.duration * s.time_base))
+        return {"duration_ms": int(dur * 1000), "has_audio": bool(c.streams.audio), "has_video": bool(c.streams.video)}
+
+
 def b64(v):
     import numpy as np
 
@@ -189,6 +315,8 @@ def serve(args):
                 result = emb.info
             elif method == "embed_documents":
                 result = {"vectors": emb.encode(params["inputs"])}
+            elif method == "probe":
+                result = probe(params["path"])
             elif method == "embed_query":
                 result = {"vectors": emb.encode([params["input"]], query=True)}
             elif method == "shutdown":
