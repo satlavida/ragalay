@@ -88,6 +88,8 @@ ragalay  [Search]  Status   Folders    42 documents indexed
 
 **Adding documents**: just put files in the folder. While ragalay is open it notices new, changed, moved and deleted files within seconds; otherwise it catches up the next time you open it. Moving or renaming a file does not make it read the file again.
 
+**How long indexing takes**: the percentage counts work by size, so a 300-page PDF moves the bar more than a short note. The time left is learned from your own computer and improves as it goes. At the start it says "estimating" until it has timed a few files, and later runs begin with what the last one learned.
+
 **What ragalay reads**: Markdown (`.md`), PDF (including scanned PDFs, which it reads as pictures of the pages), and pictures (`.png`, `.jpg`, `.webp`, `.gif`, `.bmp`).
 
 **Pictures in Markdown files**: keep the pictures a Markdown file shows **in the same folder as the Markdown file** (or a subfolder such as `images/` or `assets/`). ragalay then indexes each picture together with its caption and the heading it sits under, and search results say which file it appears in.

@@ -872,11 +872,7 @@ func (m Model) activityLine() string {
 	a := m.activity
 	switch a.Kind {
 	case "progress":
-		eta := ""
-		if a.ETA > 0 {
-			eta = ", ~" + shortDur(a.ETA) + " left"
-		}
-		return dim.Render(fmt.Sprintf("indexing %d/%d%s", a.Done+1, a.Total, eta))
+		return dim.Render(fmt.Sprintf("indexing %s %d%% (%d/%d)%s", bar(a.Percent, 10), int(a.Percent), min(a.Done+1, a.Total), a.Total, etaText(a)))
 	case "busy":
 		return warn.Render("another ragalay is indexing")
 	case "error":
@@ -957,11 +953,8 @@ func (m Model) viewStatus() string {
 		b.WriteString(warn.Render("  Another ragalay ("+s.OtherIndex+") is indexing this folder.") + "\n")
 	}
 	if a := m.activity; a.Kind == "progress" {
-		b.WriteString(fmt.Sprintf("\n  Now: %s (%d of %d", a.Current, a.Done+1, a.Total))
-		if a.ETA > 0 {
-			b.WriteString(", about " + shortDur(a.ETA) + " left")
-		}
-		b.WriteString(")\n")
+		b.WriteString(fmt.Sprintf("\n  Now: %s (file %d of %d)\n", a.Current, min(a.Done+1, a.Total), a.Total))
+		b.WriteString(fmt.Sprintf("  %s %d%%%s\n", bar(a.Percent, 30), int(a.Percent), etaText(a)))
 	}
 	if len(s.FailedDocs) > 0 {
 		b.WriteString("\n  " + bad.Render("Could not index:") + "\n")
@@ -1024,6 +1017,23 @@ func human(n int64) string {
 		return fmt.Sprintf("%.0f MB", float64(n)/(1<<20))
 	}
 	return fmt.Sprintf("%d KB", n/1024)
+}
+
+// bar draws a text progress bar of the given width for pct (0-100).
+func bar(pct float64, width int) string {
+	n := int(min(max(pct, 0), 100) / 100 * float64(width))
+	return strings.Repeat("█", n) + strings.Repeat("░", width-n)
+}
+
+// etaText is the ", ~5m left" tail of a progress line; a first guess says so.
+func etaText(a WatchEvent) string {
+	switch {
+	case a.ETA <= 0:
+		return ", estimating"
+	case a.Guess:
+		return ", roughly " + shortDur(a.ETA) + " left (estimating)"
+	}
+	return ", ~" + shortDur(a.ETA) + " left"
 }
 
 func shortDur(d time.Duration) string {

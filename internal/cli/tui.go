@@ -239,7 +239,7 @@ func (b *tuiBackend) Watch(ctx context.Context, ev func(tui.WatchEvent)) error {
 		if p.Current == "" {
 			return
 		}
-		ev(tui.WatchEvent{Kind: "progress", Done: p.Done + p.Failed, Total: p.Total, Current: p.Current, ETA: p.ETA})
+		ev(tui.WatchEvent{Kind: "progress", Done: p.Done + p.Failed, Total: p.Total, Current: p.Current, ETA: p.ETA, Percent: p.Percent, Guess: p.Estimating})
 	}
 	return scan.Watch(ctx, b.root, 2*time.Second, func(rep scan.Report, err error) {
 		if err != nil {
@@ -285,7 +285,7 @@ func (b *tuiBackend) Reembed(ctx context.Context, ev func(tui.WatchEvent)) error
 	}
 	_, err = b.a.indexQueueWith(ctx, b.root, cfg, true, func(p index.Progress) {
 		if p.Current != "" {
-			ev(tui.WatchEvent{Kind: "progress", Done: p.Done + p.Failed, Total: p.Total, Current: p.Current, ETA: p.ETA})
+			ev(tui.WatchEvent{Kind: "progress", Done: p.Done + p.Failed, Total: p.Total, Current: p.Current, ETA: p.ETA, Percent: p.Percent, Guess: p.Estimating})
 		}
 	})
 	return err

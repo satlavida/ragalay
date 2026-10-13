@@ -154,4 +154,6 @@ type WatchEvent struct {
 	Total   int
 	Current string
 	ETA     time.Duration
+	Percent float64 // 0-100 of the work, by size
+	Guess   bool    // ETA is a first estimate
 }
