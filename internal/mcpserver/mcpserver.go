@@ -31,6 +31,8 @@ type SearchInput struct {
 	PathGlob string   `json:"path_glob,omitempty" jsonschema:"only files whose path matches, e.g. papers/*.pdf"`
 	GroupBy  string   `json:"group_by,omitempty" jsonschema:"chunk (default) or doc for one result per document"`
 	MaxChars int      `json:"max_chars,omitempty" jsonschema:"trim each result's text (default 2000)"`
+	// Confidence is the lowest confidence to return.
+	Confidence string `json:"confidence,omitempty" jsonschema:"auto (default: hide weak matches when better ones exist), all, medium or high"`
 }
 
 // SearchOutput is the search tool's result.
@@ -66,10 +68,11 @@ func New(b Backend, version string) *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "search",
 		Description: "Search the user's indexed documents. Returns ranked passages with path, page, heading and text. " +
+			"Each result has a confidence (high, medium, low) and a similarity (0-1); only trust high and medium, and if the notice says there is no confident match, tell the user the folder probably does not contain it. " +
 			"Use specific queries; run several searches for different aspects of a question.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
 		o := search.Options{K: in.K, Mode: in.Mode, Modalities: in.Modality, PathGlob: in.PathGlob,
-			GroupByDoc: strings.EqualFold(in.GroupBy, "doc"), MaxChars: in.MaxChars}
+			GroupByDoc: strings.EqualFold(in.GroupBy, "doc"), MaxChars: in.MaxChars, Confidence: in.Confidence}
 		resp, err := b.Search(ctx, in.Query, o)
 		if err != nil {
 			return nil, SearchOutput{}, err

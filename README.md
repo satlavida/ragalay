@@ -219,7 +219,8 @@ ragalay model use <embeddinggemma-2|jina-v5|openai> [--dim N] [--yes] [--no-inde
 ragalay folders add|remove [--keep]|list [--json]
 ragalay scan [--watch] [--no-index] [--yes] [--json]   find changes and index them
 ragalay search "query" [-k 10] [--mode hybrid|vector|keyword] [--modality text,image,pdf_page]
-               [--path-glob "papers/*"] [--group-by chunk|doc] [--max-chars 2000] [--json]
+               [--path-glob "papers/*"] [--group-by chunk|doc] [--confidence auto|all|medium|high]
+               [--max-chars 2000] [--json]
 ragalay docs [--status failed] [--kind pdf] [--json]
 ragalay status [--json]
 ragalay reembed [--force] [--yes]     switch the index to the current model settings
@@ -239,6 +240,8 @@ A JSON array, most relevant first:
 [
   {
     "score": 0.0328,
+    "similarity": 0.81,
+    "confidence": "high",
     "path": "papers/attention.pdf",
     "kind": "pdf",
     "modality": "text",
@@ -252,11 +255,12 @@ A JSON array, most relevant first:
 Fields that are empty are left out (here `heading_path` and `parent_path`). If the index is partway through a model switch, a `note: …` line on stderr explains which model the results come from.
 
 - `modality` is `text`, `image`, `pdf_page` (a page matched as a picture; `text` is empty, cite the page), `audio`, `video`, or `audio+video` (a video's pictures and sound matched the same moment).
-- `start_ms` and `end_ms` give the matching time range of an audio or video file in milliseconds; `start_ms` is left out when it is 0. `heading_path` shows the same range as `m:ss-m:ss`. Cite it as a time range.
+- `start_ms` and `end_ms` give the matching time range of an audio or video file in milliseconds; `start_ms` is always present when `end_ms` is. `heading_path` shows the same range as `m:ss-m:ss`. Cite it as a time range.
 - For source code, `heading_path` is `file.go:40-88`, the line range of the passage.
 - `parent_path` is set for pictures inside a Markdown file (`path` is the picture).
 - `paired_path` is the Markdown transcription of a PDF (or the PDF of a transcription).
-- Scores are for ordering only (reciprocal rank fusion in hybrid mode).
+- `confidence` (`high`, `medium` or `low`) says how sure the match is, and `similarity` (0 to 1) is the number behind it. The label comes from how close the passage is to the question in meaning (calibrated for EmbeddingGemma 2), and moves up one level when the passage also contains most of the question's words. By default weak matches are left out when better ones exist. If nothing matches well you get the closest three with a `note: no confident match…` line: tell the user the folder probably doesn't contain the answer. `--confidence all` shows everything, `medium` or `high` sets the lowest level shown. Other models (Jina, a service) give no confidence yet, and nothing is hidden.
+- `score` is for ordering only (reciprocal rank fusion in hybrid mode); it says nothing about quality.
 
 ### Exit codes
 

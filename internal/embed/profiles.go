@@ -39,6 +39,10 @@ type Profile struct {
 	IndexRevision string // pinned revision (the model may run remote code)
 	QueryPrefix   string // prepended to queries for the GGUF
 	Pooling       string // llama.cpp pooling for the GGUF
+	// StrongSim and FairSim are the cosine similarities from which a match
+	// counts as a high and a medium confidence hit. 0 = not calibrated, and
+	// search then reports no confidence for this profile.
+	StrongSim, FairSim float64
 	// Pitch is one line for the setup wizard and `model list`.
 	Pitch string
 }
@@ -65,6 +69,9 @@ var profiles = []Profile{
 		Dims:       []int{768, 512, 256, 128}, DefaultDim: 768,
 		IndexModel: "google/embeddinggemma-2", IndexRevision: "914f7f89142e33e77833254d9c9b90c3cef7303b",
 		QueryPrefix: "task: search result | query: ", Pooling: PoolMean,
+		// Measured on this model: unrelated queries top out at 0.56-0.69, real
+		// matches start at 0.69 (plans/archive/plan8).
+		StrongSim: 0.75, FairSim: 0.65,
 		Pitch: "recommended; free for any use, about 1.8 GB",
 	},
 	{

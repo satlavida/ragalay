@@ -91,7 +91,11 @@ func (a *app) searchCmd() *cobra.Command {
 		Short: "Search your documents",
 		Long: `Finds the passages, pages and images that best match the query.
 Agents should use --json: an array of {score, path, kind, modality, page,
-heading_path, text, paired_path, parent_path}.`,
+heading_path, text, paired_path, parent_path, similarity, confidence}.
+confidence is high, medium or low: how sure the match is (similarity is the
+raw 0-1 cosine behind it). By default low matches are left out when better
+ones exist; if nothing matches well you get the closest few and a note.
+score only orders the results and says nothing about quality.`,
 		Example: `  ragalay search "how does multi-head attention work"
   ragalay search "invoice total" --path-glob "finance/*" --json
   ragalay search "architecture diagram" --modality image`,
@@ -135,6 +139,7 @@ heading_path, text, paired_path, parent_path}.`,
 	f.IntVarP(&o.K, "k", "k", 10, "number of results")
 	f.StringVar(&o.Mode, "mode", "hybrid", "hybrid, vector or keyword")
 	f.StringVar(&modality, "modality", "", "only these, comma-separated: text, image, pdf_page, audio, video")
+	f.StringVar(&o.Confidence, "confidence", "auto", "auto (hide weak matches when better ones exist), all, medium or high (the lowest to show)")
 	f.StringVar(&o.PathGlob, "path-glob", "", `only paths matching this pattern, e.g. "papers/*.pdf"`)
 	f.StringVar(&groupBy, "group-by", "chunk", "chunk (every passage) or doc (best passage per document)")
 	f.IntVar(&o.MaxChars, "max-chars", 2000, "trim result text to this many characters (-1: no limit)")
@@ -156,7 +161,11 @@ func (a *app) printResults(resp search.Response) {
 		if span := r.Span(); span != "" {
 			where += ", at " + span
 		}
-		fmt.Fprintf(w, "%2d. %s  (%.3f)\n", i+1, where, r.Score)
+		if r.Confidence != "" {
+			fmt.Fprintf(w, "%2d. %s  [%s confidence, similarity %.2f]\n", i+1, where, r.Confidence, r.Similarity)
+		} else {
+			fmt.Fprintf(w, "%2d. %s  (%.3f)\n", i+1, where, r.Score)
+		}
 		if r.ParentPath != "" {
 			fmt.Fprintf(w, "    image in %s\n", r.ParentPath)
 		}

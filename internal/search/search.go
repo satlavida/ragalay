@@ -42,12 +42,18 @@ type Options struct {
 	PathGlob   string   // e.g. "papers/*.pdf"; "*" also matches across folders
 	GroupByDoc bool     // one result per document
 	MaxChars   int      // trim result text (default 2000, <0 = no limit)
+	// Confidence picks which hits to keep by how sure the match is: "" or
+	// "auto" drops weak hits when better ones exist, "all" keeps everything,
+	// "medium" and "high" set a floor.
+	Confidence string
 }
 
 // Result is one search hit. The JSON form is ragalay's stable search
 // output for agents (plan1 §4.5).
 type Result struct {
 	Score       float64 `json:"score"`
+	Similarity  float64 `json:"similarity,omitempty"` // cosine similarity of the best vector match, 0-1
+	Confidence  string  `json:"confidence,omitempty"` // high, medium or low; empty when the model has no calibration
 	Path        string  `json:"path"`
 	Kind        string  `json:"kind"`
 	Modality    string  `json:"modality"`
@@ -61,6 +67,7 @@ type Result struct {
 	Chunks      int     `json:"chunks,omitempty"`      // with GroupByDoc: matching chunks in the document
 
 	chunkID int64
+	kw      bool // the passage also matched the query's words
 	docID   int64
 	pairID  int64
 	pairKey string
@@ -171,12 +178,14 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) (Respons
 	if o.GroupByDoc {
 		resp.Results = groupByDoc(resp.Results)
 	}
+	resp.Results, resp.Notice = s.rateAndFilter(resp.Results, o, resp.Notice)
 	if len(resp.Results) > o.K {
 		resp.Results = resp.Results[:o.K]
 	}
 	for i := range resp.Results {
 		resp.Results[i].Text = trim(resp.Results[i].Text, o.MaxChars)
 		resp.Results[i].Score = math.Round(resp.Results[i].Score*1e4) / 1e4
+		resp.Results[i].Similarity = math.Round(resp.Results[i].Similarity*1e3) / 1e3
 	}
 	return resp, nil
 }
@@ -243,6 +252,8 @@ func (s *Searcher) queryVector(ctx context.Context, dbPath, query string) ([]flo
 type hit struct {
 	chunkID int64
 	score   float64
+	sim     float64 // cosine similarity, 0 when the vector search did not return it
+	kw      bool    // the passage contains most of the query's words
 }
 
 // filterSQL builds the shared WHERE clause for modality and path filters.
@@ -283,6 +294,7 @@ func vectorHits(ctx context.Context, db *sql.DB, q []float32, o Options, limit i
 			return nil, err
 		}
 		h.score = 1 - dist // cosine similarity
+		h.sim = h.score
 		out = append(out, h)
 	}
 	return out, rows.Err()
@@ -303,6 +315,7 @@ func keywordHits(ctx context.Context, db *sql.DB, query string, o Options, limit
 	}
 	filter, fargs := filterSQL(o)
 	scores := map[int64]float64{}
+	matched := map[int64]int{}
 	for term := range terms {
 		var termID int64
 		var df int
@@ -328,6 +341,7 @@ func keywordHits(ctx context.Context, db *sql.DB, query string, o Options, limit
 				return nil, err
 			}
 			scores[id] += bm25.Score(idf, tf, l, avg.Float64)
+			matched[id]++
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -336,7 +350,7 @@ func keywordHits(ctx context.Context, db *sql.DB, query string, o Options, limit
 	}
 	out := make([]hit, 0, len(scores))
 	for id, s := range scores {
-		out = append(out, hit{id, s})
+		out = append(out, hit{chunkID: id, score: s, kw: 2*matched[id] >= len(terms)})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].score != out[j].score {
@@ -360,15 +374,19 @@ func fuse(vec, kw []hit, mode string) []hit {
 		return kw
 	}
 	scores := map[int64]float64{}
+	sims := map[int64]float64{}
+	inKW := map[int64]bool{}
 	for i, h := range vec {
 		scores[h.chunkID] += 1 / float64(rrfK+i+1)
+		sims[h.chunkID] = h.sim
 	}
 	for i, h := range kw {
 		scores[h.chunkID] += 1 / float64(rrfK+i+1)
+		inKW[h.chunkID] = h.kw
 	}
 	out := make([]hit, 0, len(scores))
 	for id, s := range scores {
-		out = append(out, hit{id, s})
+		out = append(out, hit{chunkID: id, score: s, sim: sims[id], kw: inKW[id]})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].score != out[j].score {
@@ -398,7 +416,7 @@ func (s *Searcher) details(ctx context.Context, db *sql.DB, hits []hit) ([]Resul
 		if err != nil {
 			return nil, err
 		}
-		r.chunkID, r.Score = h.chunkID, h.score
+		r.chunkID, r.Score, r.Similarity, r.kw = h.chunkID, h.score, h.sim, h.kw
 		r.Page, r.HeadingPath, r.Text, r.PairedPath = int(page.Int64), heading.String, text.String, pairPath.String
 		r.StartMS, r.EndMS = startMS.Int64, endMS.Int64
 		if source.Valid && source.String != "" && source.String != r.Path {
@@ -494,6 +512,7 @@ func mergeMoments(rs []Result) []Result {
 			if o.docID == r.docID && o.EndMS > o.StartMS && r.StartMS < o.EndMS && o.StartMS < r.EndMS &&
 				max(o.EndMS, r.EndMS)-min(o.StartMS, r.StartMS) <= 2*extract.WindowMS {
 				o.StartMS, o.EndMS = min(o.StartMS, r.StartMS), max(o.EndMS, r.EndMS)
+				o.Similarity, o.kw = max(o.Similarity, r.Similarity), o.kw || r.kw
 				o.HeadingPath = o.Span()
 				if o.Modality != r.Modality {
 					o.Modality = "audio+video"
@@ -517,6 +536,7 @@ func combine(a, b Result) Result {
 		pdf, md = b, a
 	}
 	m := a
+	m.Similarity, m.kw = max(a.Similarity, b.Similarity), a.kw || b.kw
 	m.Path, m.Kind, m.PairedPath = pdf.Path, pdf.Kind, md.Path
 	if pdf.Page != 0 {
 		m.Page = pdf.Page
@@ -538,6 +558,7 @@ func groupByDoc(rs []Result) []Result {
 		}
 		if i, ok := idx[key]; ok {
 			out[i].Chunks++
+			out[i].Similarity, out[i].kw = max(out[i].Similarity, r.Similarity), out[i].kw || r.kw
 			continue
 		}
 		r.Chunks = 1
