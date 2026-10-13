@@ -68,14 +68,14 @@ Notes: line ranges live in `heading_path`. camelCase BM25 splitting and open-at-
 
 **Exit:** met on this Mac: probe reports duration and streams; a 30 s window of a wav, the audio track of an mp4 and 30 frames of the mp4 each give a 768-dim vector; text vectors are unchanged after the audio encoder loads (cosine 1.0); a 30-frame window takes ~9 s on MPS. (Window planning is Phase 3.)
 
-### Phase 3: Windowing and indexing
+### Phase 3: Windowing and indexing ✅ Completed (2026-10-13)
 **Goal:** Media files are indexed end to end.
-- [ ] `internal/extract/media.go`: windows (D2) from the probed duration; chunk text empty, `heading_path` `mm:ss–mm:ss`.
-- [ ] Runner: start the embedder before extracting a media job, probe, then embed in batches with Plan 6 progress.
-- [ ] Failures (corrupt file, no streams) are per-document errors with clear text.
-- [ ] Tests with the fake embedder; one real-model test (skipped without the profile).
+- [x] `internal/extract/media.go`: windows (D2) from the probed duration; chunk text empty, `heading_path` `mm:ss–mm:ss`.
+- [x] Runner: start the embedder before extracting a media job, probe, then embed in batches with Plan 6 progress.
+- [x] Failures (corrupt file, no streams) are per-document errors with clear text.
+- [x] Tests with the fake embedder; real-model audio test in `internal/setup/integration_test.go` (skipped without the profile or with `-short`). Video windows were checked by hand with scratch scripts, since a Go test cannot make an mp4.
 
-**Exit:** a folder with a wav, an mp4 and text indexes; `search` finds the audio window by a text query matching what is said or heard (checked by hand on a real clip).
+**Exit:** met on this Mac with the real model: a folder with two spoken-word recordings (macOS `say`, m4a), an mp4 and a note indexed in 30 s (6 chunks); the query "how do I bake banana bread" returns the banana-bread recording at rank 1, "quarterly budget meeting lighthouse renovation" returns the budget recording at rank 1, and "gardening tomatoes" returns the note.
 
 ### Phase 4: Search output and docs
 **Goal:** People and agents see time ranges.

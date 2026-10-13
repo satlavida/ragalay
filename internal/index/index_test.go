@@ -302,3 +302,69 @@ func TestMediaSkippedWhenModelCannotReadIt(t *testing.T) {
 		}
 	}
 }
+
+// probingEmbedder is a fake indexing model that can also read media.
+type probingEmbedder struct {
+	fakeEmbedder
+	info   embed.MediaInfo
+	inputs []embed.Input
+}
+
+func (p *probingEmbedder) Probe(context.Context, string) (embed.MediaInfo, error) { return p.info, nil }
+
+func (p *probingEmbedder) EmbedDocuments(ctx context.Context, in []embed.Input) ([][]float32, error) {
+	p.inputs = append(p.inputs, in...)
+	return p.fakeEmbedder.EmbedDocuments(ctx, in)
+}
+
+func TestMediaIndexedInWindows(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, config.DirName), 0o755)
+	cfg := config.Default() // EmbeddingGemma 2 reads audio and video
+	config.Save(root, cfg)
+	ctx := context.Background()
+	if err := store.With(ctx, dbPath(root), func(db *sql.DB) error { return store.Migrate(ctx, db, cfg.Embed.Dim) }); err != nil {
+		t.Fatal(err)
+	}
+	put(t, root, "talks/interview.mp4", []byte("fake video bytes"))
+	if _, err := scan.Run(ctx, root, cfg); err != nil {
+		t.Fatal(err)
+	}
+	p := &probingEmbedder{info: embed.MediaInfo{DurationMS: 70_000, HasAudio: true, HasVideo: true}}
+	var last Progress
+	r := &Runner{Root: root, Cfg: cfg, NewEmbedder: func(context.Context) (Embedder, error) { return p, nil },
+		Progress: func(pr Progress) { last = pr }}
+	sum, err := r.Run(ctx)
+	if err != nil || sum.Indexed != 1 || sum.Failed != 0 || sum.Chunks != 6 {
+		t.Fatalf("summary %+v, %v", sum, err)
+	}
+	if last.Percent != 100 {
+		t.Errorf("final percent %v", last.Percent)
+	}
+	for _, in := range p.inputs {
+		if (in.Modality != embed.Video && in.Modality != embed.Audio) || in.EndMS-in.StartMS > 30_000 || in.Path == "" {
+			t.Errorf("input %+v", in)
+		}
+	}
+	if len(p.inputs) != 6 {
+		t.Errorf("embedded %d windows, want 6", len(p.inputs))
+	}
+	store.With(ctx, dbPath(root), func(db *sql.DB) error {
+		rows, err := db.QueryContext(ctx, `SELECT modality, heading_path, start_ms, end_ms FROM chunks ORDER BY id`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		n := 0
+		for rows.Next() {
+			var mod, label string
+			var s, e int64
+			rows.Scan(&mod, &label, &s, &e)
+			if n == 1 && (mod != "video" || label != "0:25-0:55" || s != 25_000 || e != 55_000) {
+				t.Errorf("second chunk: %s %s %d-%d", mod, label, s, e)
+			}
+			n++
+		}
+		return nil
+	})
+}

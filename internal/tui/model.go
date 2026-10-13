@@ -1028,8 +1028,8 @@ func bar(pct float64, width int) string {
 // etaText is the ", ~5m left" tail of a progress line; a first guess says so.
 func etaText(a WatchEvent) string {
 	switch {
-	case a.ETA <= 0:
-		return ", estimating"
+	case a.ETA < time.Second:
+		return ""
 	case a.Guess:
 		return ", roughly " + shortDur(a.ETA) + " left (estimating)"
 	}

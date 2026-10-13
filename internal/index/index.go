@@ -188,18 +188,22 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 		}
 	}()
 	eta := newRates(r.Root)
+	// Costs start as size-based guesses; a media file's real duration
+	// replaces its guess once it is probed.
 	var totalUnits, doneUnits float64
-	for _, j := range jobs {
-		totalUnits += cost(j)
+	costs := make([]float64, len(jobs))
+	for i, j := range jobs {
+		costs[i] = cost(j)
+		totalUnits += costs[i]
 	}
 	// report sends progress; partial is the fraction of jobs[i] already done.
 	report := func(i int, partial float64) {
 		if r.Progress == nil {
 			return
 		}
-		pct := 100 * (doneUnits + cost(jobs[i])*partial) / totalUnits
+		pct := 100 * (doneUnits + costs[i]*partial) / totalUnits
 		r.Progress(Progress{Done: sum.Indexed + sum.Linked, Failed: sum.Failed, Total: len(jobs),
-			Current: jobs[i].Path, Elapsed: time.Since(start), ETA: eta.remaining(jobs[i:], partial),
+			Current: jobs[i].Path, Elapsed: time.Since(start), ETA: eta.remaining(jobs[i:], costs[i:], partial),
 			Percent: min(pct, 100), Estimating: eta.estimating(jobs[i:])})
 	}
 	defer func() {
@@ -227,7 +231,7 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 					return sum, err
 				}
 				sum.Linked++
-				doneUnits += cost(job)
+				doneUnits += costs[i]
 				continue
 			}
 		}
@@ -239,13 +243,29 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 				return sum, err
 			}
 			sum.Skipped++
-			doneUnits += cost(job)
+			doneUnits += costs[i]
 			continue
 		}
 		if err := r.claim(ctx, job.ID); err != nil {
 			return sum, err
 		}
+		// Media is read by the indexing model, so it starts before extraction.
+		if mediaModality(job.Kind) != "" && emb == nil {
+			if emb, err = r.NewEmbedder(ctx); err != nil {
+				r.release(job.ID)
+				return sum, fmt.Errorf("start indexing model: %w", err)
+			}
+			docStart = time.Now() // model start-up is not document time
+		}
+		if p, ok := emb.(embed.Prober); ok {
+			ex.Opts.Probe = p.Probe
+		}
 		res, err := ex.Extract(ctx, job.Kind, job.Path, job.Kind == scan.KindPDF && job.PairedWith == scan.KindMarkdown)
+		if res.Seconds > 0 {
+			// The real duration replaces the size-based guess.
+			totalUnits += res.Seconds - costs[i]
+			costs[i] = res.Seconds
+		}
 		var rows []store.ChunkRow
 		if err == nil && len(res.Units) > 0 {
 			if emb == nil {
@@ -263,7 +283,7 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 		}
 		if err != nil {
 			sum.Failed++
-			doneUnits += cost(job)
+			doneUnits += costs[i]
 			sum.Errors = append(sum.Errors, DocError{Path: job.Path, Error: err.Error()})
 			r.logf("failed %s: %v", job.Path, err)
 			if ferr := r.fail(ctx, job.ID, err.Error()); ferr != nil {
@@ -287,8 +307,8 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 		}
 		sum.Indexed++
 		sum.Chunks += len(rows)
-		eta.observe(job.Kind, cost(job), time.Since(docStart))
-		doneUnits += cost(job)
+		eta.observe(job.Kind, costs[i], time.Since(docStart))
+		doneUnits += costs[i]
 		r.logf("indexed %s: %d chunks in %v", job.Path, len(rows), time.Since(docStart).Round(time.Millisecond))
 	}
 	sum.Duration = time.Since(start)
@@ -304,7 +324,7 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 // mediaModality is the modality a media document needs, "" for other kinds.
 func mediaModality(kind string) string {
 	switch kind {
-	case scan.KindAudio:
+	case scan.KindAudio: // a document kind and a chunk modality share the name
 		return embed.Audio
 	case scan.KindVideo:
 		return embed.Video
@@ -358,7 +378,8 @@ func (r *Runner) embed(ctx context.Context, emb Embedder, docPath string, units 
 	units = keep
 	rows := make([]store.ChunkRow, len(units))
 	for i, u := range units {
-		rows[i] = store.ChunkRow{Modality: u.Modality, Text: u.Text, HeadingPath: u.HeadingPath, Page: u.Page, Tokens: u.Tokens}
+		rows[i] = store.ChunkRow{Modality: u.Modality, Text: u.Text, HeadingPath: u.HeadingPath, Page: u.Page, Tokens: u.Tokens,
+			StartMS: u.StartMS, EndMS: u.EndMS}
 		if u.Modality == embed.Image {
 			rows[i].SourcePath = u.Source
 			if rows[i].Text == "" {
@@ -373,8 +394,20 @@ func (r *Runner) embed(ctx context.Context, emb Embedder, docPath string, units 
 			todo = append(todo, i)
 		}
 	}
-	for b := 0; b < len(todo); b += batch {
+	for b := 0; b < len(todo); {
 		idx := todo[b:min(b+batch, len(todo))]
+		// A media window takes seconds, so it goes alone: progress moves and
+		// stopping is quick.
+		if mediaModality(units[idx[0]].Modality) != "" {
+			idx = idx[:1]
+		}
+		for k, i := range idx {
+			if k > 0 && mediaModality(units[i].Modality) != "" {
+				idx = idx[:k]
+				break
+			}
+		}
+		b += len(idx)
 		in := make([]embed.Input, len(idx))
 		for j, i := range idx {
 			in[j] = units[i].Input(r.Root, docPath)
@@ -394,7 +427,7 @@ func (r *Runner) embed(ctx context.Context, emb Embedder, docPath string, units 
 			rows[idx[j]].Vector = fit
 		}
 		if onBatch != nil {
-			onBatch(float64(b+len(idx)) / float64(len(todo)))
+			onBatch(float64(b) / float64(len(todo)))
 		}
 	}
 	return rows, nil

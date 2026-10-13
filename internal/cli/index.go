@@ -83,9 +83,11 @@ func (p *progressLine) update(pr index.Progress) {
 		return
 	}
 	eta := ", estimating time left"
-	if !pr.Estimating && pr.ETA > 0 {
+	if pr.ETA < time.Second {
+		eta = ""
+	} else if !pr.Estimating {
 		eta = ", about " + humanDuration(pr.ETA) + " left"
-	} else if pr.Estimating && pr.ETA > 0 {
+	} else {
 		eta = ", roughly " + humanDuration(pr.ETA) + " left (estimating)"
 	}
 	line := fmt.Sprintf("Indexing %d%% (file %d/%d)%s: %s", int(pr.Percent), min(pr.Done+pr.Failed+1, pr.Total), pr.Total, eta, pr.Current)

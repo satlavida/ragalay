@@ -22,6 +22,8 @@ type Unit struct {
 	Page        int    `json:"page,omitempty"`         // 1-based
 	Source      string `json:"source,omitempty"`       // file to embed for image/pdf_page (stored form)
 	Tokens      int    `json:"tokens,omitempty"`
+	StartMS     int64  `json:"start_ms,omitempty"` // audio and video windows
+	EndMS       int64  `json:"end_ms,omitempty"`
 }
 
 // Input converts the unit to what the indexing model embeds. Text gets its
@@ -40,6 +42,9 @@ func (u Unit) Input(root, docPath string) embed.Input {
 			t = u.HeadingPath + "\n\n" + t
 		}
 		return embed.Input{Modality: embed.Text, Text: t, Title: title}
+	case embed.Audio, embed.Video:
+		return embed.Input{Modality: u.Modality, Path: filepath.Join(root, filepath.FromSlash(u.Source)),
+			StartMS: u.StartMS, EndMS: u.EndMS, Title: title}
 	case embed.PDFPage:
 		return embed.Input{Modality: embed.PDFPage, Path: filepath.Join(root, filepath.FromSlash(u.Source)), Page: u.Page - 1, Title: title}
 	}
@@ -55,6 +60,7 @@ type Result struct {
 	Units    []Unit     `json:"units"`
 	Links    []ImageRef `json:"links,omitempty"` // images linked from a Markdown file
 	Pages    int        `json:"pages,omitempty"`
+	Seconds  float64    `json:"seconds,omitempty"` // media duration
 	Warnings []string   `json:"warnings,omitempty"`
 }
 
@@ -63,6 +69,9 @@ type Options struct {
 	Tokens, Overlap int
 	PageImages      bool // embed each PDF page as an image (covers scanned PDFs)
 	Tokenizer       chunk.Tokenizer
+	// Probe reads a media file's duration and streams (the indexing model does
+	// it, plan3 D3). Nil for runs that cannot read media.
+	Probe func(ctx context.Context, file string) (embed.MediaInfo, error)
 }
 
 // ErrNoContent means nothing in the document could be indexed.
@@ -149,6 +158,9 @@ func (e *Extractor) Extract(ctx context.Context, kind, rel string, paired bool) 
 		}
 		units, err := Code(rel, src, e.Opts.Tokens, e.Opts.Overlap, e.Opts.Tokenizer)
 		return Result{Units: units}, err
+
+	case scan.KindAudio, scan.KindVideo:
+		return e.mediaUnits(ctx, kind, rel, file)
 
 	case scan.KindImage:
 		return Result{Units: []Unit{{Modality: embed.Image, Source: rel}}}, nil

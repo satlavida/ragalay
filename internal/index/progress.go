@@ -107,12 +107,12 @@ func (r *rates) estimating(jobs []store.Job) bool {
 	return false
 }
 
-// remaining estimates the time for jobs; partial is the fraction of the
-// first job already done.
-func (r *rates) remaining(jobs []store.Job, partial float64) time.Duration {
+// remaining estimates the time for jobs, whose costs are in units; partial
+// is the fraction of the first job already done.
+func (r *rates) remaining(jobs []store.Job, costs []float64, partial float64) time.Duration {
 	var s float64
 	for i, j := range jobs {
-		c := cost(j)
+		c := costs[i]
 		if i == 0 {
 			c *= 1 - min(max(partial, 0), 1)
 		}
