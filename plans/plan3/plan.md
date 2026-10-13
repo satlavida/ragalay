@@ -33,7 +33,9 @@ Scratch scripts were run from the session scratchpad, not committed. Jina was **
 | Deps | Audio input through sentence-transformers needs `librosa` (pulls numba, scipy, scikit-learn); `av`, `soundfile`, `librosa` and their dependencies are ~320 MB extra in the Python environment. To check in the build phase: pass a decoded numpy array for audio and drop `librosa`. Setup must install these only when a folder enables audio or video. |
 | Sidecar | `sidecar.py` loads Gemma with `audio_config: None`; media needs the audio encoder (+570M parameters in memory) and the vision encoder loaded together. Loading it only when a media job exists keeps text indexing light. |
 
-Open still: Q3 (embed a video's audio track separately: not tested, recommended yes since 30 s of audio costs ~1 s), Jina results, Windows and Linux decoding.
+**Q3 decided (user, 2026-10-13): yes.** A video is indexed as two streams: its frames in ≤ 32 s windows, and its audio track extracted by PyAV and run through the audio path in ≤ 30 s windows (~1 s each). Both kinds of chunk carry the same `start_ms`/`end_ms` and belong to the one video document, so a spoken phrase finds the right moment even when the picture does not show it. A video without an audio track indexes frames only. Search merges hits from the two streams that overlap in time into one result. Not yet tested: extracting audio from a video with PyAV and resampling to 16 kHz mono.
+
+Open still: Jina results, Windows and Linux decoding.
 
 ## Schema changes
 - `documents.kind` gains `code` (no schema change; the column is free text).
