@@ -1,6 +1,6 @@
 # Plan 3: audio, video, and code files
 
-**Status:** In progress (finalized 2026-10-13, after the user chose spike-first, native embedding, and "index a video's audio track separately")
+**Status:** Completed (2026-10-13). Verified only on macOS arm64 with EmbeddingGemma 2; see "Not verified" below.
 **Created:** 2026-10-06 · **Finalized:** 2026-10-13
 **Depends on:** Plan 1 (sidecar, job queue, schema, search), Plan 2 (embedding profiles), Plan 6 (cost model for estimates)
 **Moved out:** search by example, MD page markers, open-at-timestamp → `plans/plan7` (not part of the 2026-10-13 request)
@@ -86,7 +86,14 @@ Notes: line ranges live in `heading_path`. camelCase BM25 splitting and open-at-
 
 **Exit:** documented, tested, committed; plan archived and tagged `plan3`.
 
-## 5. Risks
+## 5. Not verified at completion
+- **Windows and Linux:** PyAV decoding, CPU speed and the setup install of `av` were not run there. The code uses `filepath` and PyAV only, so nothing is OS-specific, but no one has tried it.
+- **Jina v5:** untested for media, so its profile does not list `audio` or `video`. Such files are skipped with a note.
+- **Long files:** the largest media file indexed was 70 s of generated audio and a 40 s video. Hour-long files rely on the measured per-window speed, not a run.
+- **Video content search:** frame embeddings were checked for shape and speed, not for retrieval quality (the test video was random noise). Audio retrieval was checked with real speech.
+- **Real-model video test:** none is committed (a Go test cannot create an mp4); the video path is covered by the fake-embedder runner test and the manual run.
+
+## 6. Risks
 - Video speed on CPU-only machines: scheduled last, and estimates say so (Plan 6). A per-folder `kinds` setting turns video off.
 - The 30 s audio cut is a model-processor behavior and could change in a model revision; the pinned revision protects us, and a test asserts the token count.
 - Windows and Linux decoding are untested; Phase 2 adds their results if the user runs the scripts there.
