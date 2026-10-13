@@ -161,6 +161,16 @@ func TestMixedFolderIndexesEndToEnd(t *testing.T) {
 	if sum.Indexed != 6 || sum.Linked != 1 || sum.Failed != 1 || !f.closed.Load() {
 		t.Fatalf("summary: %+v", sum)
 	}
+	last := -1.0
+	for _, p := range progress {
+		if p.Percent < last || p.Percent > 100 {
+			t.Fatalf("percent went %v -> %v", last, p.Percent)
+		}
+		last = p.Percent
+	}
+	if last != 100 {
+		t.Errorf("final percent = %v, want 100", last)
+	}
 	d := docsByPath(t, root)
 	for path, want := range map[string]struct {
 		status string

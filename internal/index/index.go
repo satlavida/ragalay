@@ -12,7 +12,6 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -112,6 +111,8 @@ type Progress struct {
 	Current             string        // document being indexed
 	Elapsed             time.Duration // since the run started
 	ETA                 time.Duration // estimate for the rest of the queue
+	Percent             float64       // 0-100 of the queue's work, by size not file count
+	Estimating          bool          // ETA is a first guess: too little measured yet
 }
 
 // Summary is the result of a run.
@@ -185,7 +186,21 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 			emb.Close()
 		}
 	}()
-	eta := newETA(r.Root)
+	eta := newRates(r.Root)
+	var totalUnits, doneUnits float64
+	for _, j := range jobs {
+		totalUnits += cost(j)
+	}
+	// report sends progress; partial is the fraction of jobs[i] already done.
+	report := func(i int, partial float64) {
+		if r.Progress == nil {
+			return
+		}
+		pct := 100 * (doneUnits + cost(jobs[i])*partial) / totalUnits
+		r.Progress(Progress{Done: sum.Indexed + sum.Linked, Failed: sum.Failed, Total: len(jobs),
+			Current: jobs[i].Path, Elapsed: time.Since(start), ETA: eta.remaining(jobs[i:], partial),
+			Percent: min(pct, 100), Estimating: eta.estimating(jobs[i:])})
+	}
 	defer func() {
 		eta.save(r.Root)
 		// Fold the write-ahead log into index.db so the folder copies cleanly.
@@ -196,10 +211,7 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 		if ctx.Err() != nil {
 			break
 		}
-		if r.Progress != nil {
-			r.Progress(Progress{Done: sum.Indexed + sum.Linked, Failed: sum.Failed, Total: len(jobs),
-				Current: job.Path, Elapsed: time.Since(start), ETA: eta.remaining(jobs[i:])})
-		}
+		report(i, 0)
 		docStart := time.Now()
 		// Images shown in a Markdown file are indexed with it.
 		if job.Kind == scan.KindImage {
@@ -214,6 +226,7 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 					return sum, err
 				}
 				sum.Linked++
+				doneUnits += cost(job)
 				continue
 			}
 		}
@@ -228,8 +241,9 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 					r.release(job.ID)
 					return sum, fmt.Errorf("start indexing model: %w", err)
 				}
+				docStart = time.Now() // model start-up is not document time
 			}
-			rows, err = r.embed(ctx, emb, job.Path, res.Units)
+			rows, err = r.embed(ctx, emb, job.Path, res.Units, func(f float64) { report(i, f) })
 		}
 		if ctx.Err() != nil {
 			r.release(job.ID) // interrupted: try again next time
@@ -237,6 +251,7 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 		}
 		if err != nil {
 			sum.Failed++
+			doneUnits += cost(job)
 			sum.Errors = append(sum.Errors, DocError{Path: job.Path, Error: err.Error()})
 			r.logf("failed %s: %v", job.Path, err)
 			if ferr := r.fail(ctx, job.ID, err.Error()); ferr != nil {
@@ -260,12 +275,13 @@ func (r *Runner) Run(ctx context.Context) (sum Summary, err error) {
 		}
 		sum.Indexed++
 		sum.Chunks += len(rows)
-		eta.observe(job.Kind, time.Since(docStart))
+		eta.observe(job.Kind, cost(job), time.Since(docStart))
+		doneUnits += cost(job)
 		r.logf("indexed %s: %d chunks in %v", job.Path, len(rows), time.Since(docStart).Round(time.Millisecond))
 	}
 	sum.Duration = time.Since(start)
 	if r.Progress != nil {
-		r.Progress(Progress{Done: sum.Indexed + sum.Linked, Failed: sum.Failed, Total: len(jobs), Elapsed: sum.Duration})
+		r.Progress(Progress{Done: sum.Indexed + sum.Linked, Failed: sum.Failed, Total: len(jobs), Elapsed: sum.Duration, Percent: 100})
 	}
 	if ctx.Err() != nil {
 		return sum, ctx.Err()
@@ -301,7 +317,7 @@ func (r *Runner) finishSwitch() bool {
 }
 
 // embed embeds units in batches and fits vectors to the index dimension.
-func (r *Runner) embed(ctx context.Context, emb Embedder, docPath string, units []extract.Unit) ([]store.ChunkRow, error) {
+func (r *Runner) embed(ctx context.Context, emb Embedder, docPath string, units []extract.Unit, onBatch func(float64)) ([]store.ChunkRow, error) {
 	batch := r.BatchSize
 	if batch <= 0 {
 		batch = 16
@@ -354,6 +370,9 @@ func (r *Runner) embed(ctx context.Context, emb Embedder, docPath string, units 
 			}
 			rows[idx[j]].Vector = fit
 		}
+		if onBatch != nil {
+			onBatch(float64(b+len(idx)) / float64(len(todo)))
+		}
 	}
 	return rows, nil
 }
@@ -401,61 +420,6 @@ func (r *Runner) logf(format string, args ...any) {
 	if r.Log != nil {
 		fmt.Fprintf(r.Log, time.Now().Format("2006-01-02 15:04:05 ")+format+"\n", args...)
 	}
-}
-
-// eta keeps running averages of seconds per document kind, persisted in
-// meta so the first estimate of the next run is already informed.
-type eta struct {
-	avg   map[string]float64
-	count map[string]int
-}
-
-func newETA(root string) *eta {
-	e := &eta{avg: map[string]float64{}, count: map[string]int{}}
-	ctx := context.Background()
-	store.With(ctx, dbPath(root), func(db *sql.DB) error {
-		for _, k := range []string{scan.KindMarkdown, scan.KindPDF, scan.KindImage} {
-			if v, _ := store.Meta(ctx, db, "eta_"+k); v != "" {
-				if f, err := strconv.ParseFloat(v, 64); err == nil {
-					e.avg[k], e.count[k] = f, 1
-				}
-			}
-		}
-		return nil
-	})
-	return e
-}
-
-func (e *eta) observe(kind string, d time.Duration) {
-	n := min(e.count[kind], 19) // moving average over ~20 documents
-	e.avg[kind] = (e.avg[kind]*float64(n) + d.Seconds()) / float64(n+1)
-	e.count[kind]++
-}
-
-func (e *eta) remaining(jobs []store.Job) time.Duration {
-	var s float64
-	for _, j := range jobs {
-		avg, ok := e.avg[j.Kind]
-		if !ok {
-			avg = map[string]float64{scan.KindMarkdown: 1, scan.KindPDF: 10, scan.KindImage: 1}[j.Kind]
-		}
-		s += avg
-	}
-	return time.Duration(s * float64(time.Second))
-}
-
-func (e *eta) save(root string) {
-	ctx := context.Background()
-	store.With(ctx, dbPath(root), func(db *sql.DB) error {
-		return store.Tx(ctx, db, func(tx *sql.Tx) error {
-			for k, v := range e.avg {
-				if err := store.SetMeta(ctx, tx, "eta_"+k, strconv.FormatFloat(v, 'f', 3, 64)); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-	})
 }
 
 // IsMismatch reports whether err is a model mismatch.
